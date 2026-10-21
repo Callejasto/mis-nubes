@@ -63,7 +63,7 @@ texto, sin programar: sigue la guía en [`idiomas/LEEME.md`](idiomas/LEEME.md).
 No. «Desconectar» solo quita la carpeta de este ordenador. Tus archivos siguen en la nube.
 
 **¿Dónde se guardan mis contraseñas?**
-En la configuración de rclone de tu propio ordenador (`~/.config/rclone/rclone.conf`), cifradas. Para Google, Microsoft, Dropbox y similares, la contraseña se escribe solo en la página oficial del servicio, nunca en esta aplicación.
+En la configuración de rclone de tu propio ordenador (`~/.config/rclone/rclone.conf`), un archivo que solo tu usuario puede abrir. rclone guarda las contraseñas *ofuscadas* (no se leen a simple vista), pero no cifradas: protege tu sesión del ordenador con contraseña. Para Google, Microsoft, Dropbox y similares, la contraseña se escribe solo en la página oficial del servicio, nunca en esta aplicación.
 
 **iCloud me pide iniciar sesión otra vez.**
 Es normal: Apple lo exige cada 30 días. Pulsa **⋯ › Volver a iniciar sesión** en su tarjeta.

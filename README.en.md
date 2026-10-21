@@ -61,7 +61,7 @@ It currently speaks **Spanish** and **English**. Want to translate it into anoth
 No. "Disconnect" only removes the folder from this computer. Your files stay in the cloud.
 
 **Where are my passwords stored?**
-In rclone's configuration on your own computer (`~/.config/rclone/rclone.conf`), encrypted. For Google, Microsoft, Dropbox and similar services, you type your password only on the service's official page, never in this app.
+In rclone's configuration on your own computer (`~/.config/rclone/rclone.conf`), a file only your user can open. rclone stores passwords *obscured* (not readable at a glance) but not encrypted: protect your computer session with a password. For Google, Microsoft, Dropbox and similar services, you type your password only on the service's official page, never in this app.
 
 **iCloud asks me to sign in again.**
 That's normal: Apple requires it every 30 days. Press **⋯ › Sign in again** on its card.

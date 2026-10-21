@@ -20,11 +20,11 @@ from PyQt6.QtCore import (QLibraryInfo, QLocale, QObject, QRectF, QSize, Qt, QTh
 from PyQt6.QtGui import (QColor, QDesktopServices, QFont, QGuiApplication, QIcon, QPainter,
                          QPainterPath, QPixmap)
 from PyQt6.QtWidgets import (
-    QGraphicsDropShadowEffect, QGridLayout, QListView, QSizePolicy,
+    QGraphicsDropShadowEffect, QListView,
     QApplication, QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout,
     QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu,
     QMessageBox, QProgressBar, QPushButton, QScrollArea, QStackedWidget,
-    QToolButton, QVBoxLayout, QWidget,
+    QVBoxLayout, QWidget,
 )
 
 APP = "Mis nubes"
@@ -227,8 +227,8 @@ TRADUCCION = {
             "Se parece a esto: https://tu-servidor.com/remote.php/dav/files/USUARIO\n\n"
             "Si no la sabes, pídesela a quien administra tu servidor."),
     "user": ("Usuario", "Tu nombre de usuario o correo."),
-    "pass": ("Contraseña", "Se guarda cifrada en este ordenador."),
-    "password": ("Contraseña", "Se guarda cifrada en este ordenador."),
+    "pass": ("Contraseña", "Se guarda en este ordenador, en un archivo que solo tu usuario puede abrir."),
+    "password": ("Contraseña", "Se guarda en este ordenador, en un archivo que solo tu usuario puede abrir."),
     "apple_id": ("Tu correo de Apple", "Es el correo con el que entras en tu iPhone o en "
                  "icloud.com. Lo ves en el iPhone: Ajustes › (tu nombre, arriba del todo)."),
     "username": ("Usuario", "Tu nombre de usuario o correo."),
@@ -472,12 +472,37 @@ def q(texto):
     return f'"{t}"'
 
 
+_CACHE_CONFIG = {"ruta": None, "marca": None, "datos": {}}
+
+
+def ruta_config_rclone():
+    if _CACHE_CONFIG["ruta"] is None:
+        ruta = os.environ.get("RCLONE_CONFIG")
+        if not ruta:
+            try:
+                salida = run([RCLONE, "config", "file"]).stdout.strip().splitlines()
+                ruta = salida[-1].strip() if salida else ""
+            except OSError:
+                ruta = ""
+        _CACHE_CONFIG["ruta"] = Path(ruta or HOME / ".config/rclone/rclone.conf")
+    return _CACHE_CONFIG["ruta"]
+
+
 def config_dump():
     try:
+        st = ruta_config_rclone().stat()
+        marca = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        marca = None
+    if marca is not None and marca == _CACHE_CONFIG["marca"]:
+        return dict(_CACHE_CONFIG["datos"])
+    try:
         r = run([RCLONE, "config", "dump"])
-        return json.loads(r.stdout or "{}", strict=False)
+        datos = json.loads(r.stdout or "{}", strict=False)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
+    _CACHE_CONFIG["marca"], _CACHE_CONFIG["datos"] = marca, datos
+    return dict(datos)
 
 
 def titulo_de(remoto, datos):
@@ -493,8 +518,24 @@ def unidad_de(remoto):
     return f"mis-nubes-{slug(remoto)}-{h}.service"
 
 
+def puntos_de_montaje():
+    """Carpetas montadas ahora mismo, leídas de /proc (no toca las carpetas: nunca se bloquea)."""
+    try:
+        with open("/proc/self/mountinfo", encoding="utf-8", errors="replace") as f:
+            lineas = f.read().splitlines()
+    except OSError:
+        return set()
+    puntos = set()
+    for linea in lineas:
+        campos = linea.split(" ")
+        if len(campos) > 4:
+            # el kernel escribe espacios y otros caracteres como \040, \011…
+            puntos.add(re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), campos[4]))
+    return puntos
+
+
 def montado(ruta):
-    return run(["mountpoint", "-q", str(ruta)]).returncode == 0
+    return os.path.abspath(str(ruta)) in puntos_de_montaje()
 
 
 def escribir_unidad(remoto, datos):
@@ -504,7 +545,7 @@ def escribir_unidad(remoto, datos):
     extra = (" \\\n    --read-only --vfs-refresh --attr-timeout 1m"
              if datos.get("service") == "photos" else "")
     (UNIT_DIR / unidad_de(remoto)).write_text(UNIT.format(
-        titulo=titulo.replace("\n", " "), titulo_q=q(titulo), ruta=q(str(ruta)),
+        titulo=titulo.replace("\n", " ").replace("%", "%%"), titulo_q=q(titulo), ruta=q(str(ruta)),
         remoto=q(f"{remoto}:"), programa=q(shutil.which(RCLONE) or RCLONE), extra=extra))
     run(["systemctl", "--user", "daemon-reload"])
 
@@ -526,7 +567,7 @@ def montar(remoto):
         ruta.mkdir()
     run(["systemctl", "--user", "enable", unidad])
     run(["systemctl", "--user", "start", unidad])
-    for _ in range(20):
+    for _intento in range(20):
         if montado(ruta):
             return True
         time.sleep(1)
@@ -627,6 +668,17 @@ def preparar_sistema():
 REPO = "Callejasto/mis-nubes"
 URL_ULTIMA = os.environ.get("MIS_NUBES_ACTUALIZACIONES",
                             f"https://api.github.com/repos/{REPO}/releases/latest")
+DESCARGAS_PERMITIDAS = f"https://github.com/{REPO}/releases/download/"
+
+
+def url_permitida(url, prefijo=None):
+    """Solo HTTPS (o http a este mismo ordenador, para pruebas) y, si se indica, con ese prefijo."""
+    from urllib.parse import urlparse
+    u = urlparse(url or "")
+    local = u.scheme == "http" and u.hostname in ("127.0.0.1", "localhost")
+    if u.scheme != "https" and not local:
+        return False
+    return local or prefijo is None or url.startswith(prefijo)
 PROGRAMA_INSTALADO = APP_DIR / "mis_nubes.py"
 # Comprueba (y si falta, instala) lo necesario antes de abrir el programa
 DEPENDENCIAS = ("{ python3 -c 'import PyQt6.QtWidgets' 2>/dev/null && command -v rclone && "
@@ -662,6 +714,8 @@ def abrir_version_mas_nueva():
 def tarea_buscar_actualizacion():
     """Consulta la última versión publicada en GitHub. Devuelve sus datos, o None si no hay nada nuevo."""
     import urllib.request
+    if not url_permitida(URL_ULTIMA):
+        return "error"
     try:
         pedido = urllib.request.Request(URL_ULTIMA, headers={
             "Accept": "application/vnd.github+json", "User-Agent": f"mis-nubes/{VERSION}"})
@@ -672,6 +726,8 @@ def tarea_buscar_actualizacion():
     archivo = next((a for a in d.get("assets", []) if a.get("name", "").endswith(".desktop")), None)
     if not archivo or version_tupla(d.get("tag_name")) <= version_tupla(VERSION):
         return None
+    if not url_permitida(archivo.get("browser_download_url"), DESCARGAS_PERMITIDAS):
+        return None
     return {"version": d["tag_name"].lstrip("vV"), "url": archivo["browser_download_url"],
             "huella": archivo.get("digest") or "", "pagina": d.get("html_url", "")}
 
@@ -681,6 +737,10 @@ def tarea_actualizar(info, aviso_progreso):
     import base64
     import gzip
     import urllib.request
+    huella = info.get("huella", "")
+    if not huella.startswith("sha256:") or not url_permitida(info.get("url"), DESCARGAS_PERMITIDAS):
+        return (False, _("La descarga llegó dañada o no es auténtica. No se instaló nada."),
+                "sin huella SHA-256 o enlace no permitido")
     try:
         pedido = urllib.request.Request(info["url"], headers={"User-Agent": f"mis-nubes/{VERSION}"})
         datos = bytearray()
@@ -697,8 +757,7 @@ def tarea_actualizar(info, aviso_progreso):
     except Exception as e:  # noqa: BLE001
         return (False, _("No se pudo descargar la actualización. Comprueba tu internet."), str(e))
     # 1. Huella digital: lo descargado es exactamente lo publicado
-    huella = info.get("huella", "")
-    if huella.startswith("sha256:") and hashlib.sha256(datos).hexdigest() != huella[7:]:
+    if hashlib.sha256(datos).hexdigest() != huella[7:].lower():
         return (False, _("La descarga llegó dañada o no es auténtica. No se instaló nada."),
                 "sha256 no coincide")
     # 2. Sacar el programa del lanzador y comprobar que es válido y de la versión esperada
@@ -751,12 +810,17 @@ class Eventos(QObject):
 EVENTOS = Eventos()
 
 
-def paso_rclone(args, timeout, reintento=True):
+def paso_rclone(args, timeout, reintento=True, respuesta=None):
     """Ejecuta un paso del asistente de rclone y devuelve su JSON (o un error).
     Mientras espera, avisa del enlace de inicio de sesión si rclone lo muestra."""
     liberar_puerto()
+    entorno = dict(os.environ)
+    if respuesta is not None:
+        # La respuesta (puede ser una contraseña) va en el entorno del proceso, que solo tu
+        # usuario puede leer; la línea de comandos la podría ver cualquiera del ordenador.
+        entorno["RCLONE_RESULT"] = respuesta
     p = subprocess.Popen([RCLONE, *args, "--non-interactive"], stdout=subprocess.PIPE,
-                         stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True)
+                         stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True, env=entorno)
     PROCESO["p"] = p
     lineas_err = []
     agotado = {"si": False}
@@ -791,7 +855,7 @@ def paso_rclone(args, timeout, reintento=True):
             fallo = error_rclone(err)
             if reintento and "address already in use" in fallo:
                 time.sleep(2)
-                return paso_rclone(args, timeout, reintento=False)
+                return paso_rclone(args, timeout, reintento=False, respuesta=respuesta)
             return {"_error": fallo}
         return {}
     try:
@@ -806,8 +870,8 @@ def tarea_crear(remoto, tipo, titulo, extra=()):
 
 
 def tarea_continuar(remoto, estado, respuesta, espera_navegador):
-    return paso_rclone(["config", "update", remoto, "--continue", "--state", estado,
-                        "--result", respuesta], 900 if espera_navegador else 120)
+    return paso_rclone(["config", "update", remoto, "--continue", "--state", estado],
+                       900 if espera_navegador else 120, respuesta=respuesta)
 
 
 def tarea_verificar_y_montar(remoto):
@@ -898,7 +962,7 @@ def titulo_grande(texto, extra=6):
 
 
 # ================================================================ versión y créditos
-VERSION = "1.2"
+VERSION = "1.3"
 CREDITOS = "Creado por Jose Callejas (Callejasto) y Claude (Anthropic)"
 
 # ================================================================ icono propio
@@ -960,7 +1024,9 @@ def instalar_extras():
     # Atajo «Mis nubes» en el panel lateral del explorador de archivos (Dolphin)
     try:
         xbel = HOME / ".local/share/user-places.xbel"
-        destino = f"file://{BASE}"
+        from urllib.parse import quote
+        from xml.sax.saxutils import escape
+        destino = escape("file://" + quote(str(BASE)), {'"': "&quot;"})
         if xbel.exists():
             t = xbel.read_text()
             if destino not in t and "</xbel>" in t:
@@ -968,7 +1034,7 @@ def instalar_extras():
                 icono = ('<info><metadata owner="http://freedesktop.org">'
                          '<bookmark:icon name="mis-nubes"/></metadata></info>'
                          if "xmlns:bookmark" in t else "")
-                entrada = (f' <bookmark href="{destino}">\n  <title>{_(APP)}</title>\n'
+                entrada = (f' <bookmark href="{destino}">\n  <title>{escape(_(APP))}</title>\n'
                            f'  {icono}\n </bookmark>\n')
                 i = t.rindex("</xbel>")
                 xbel.write_text(t[:i] + entrada + t[i:])
@@ -1619,6 +1685,11 @@ class Asistente(QDialog):
             self.remoto = reconectar
             self.tipo = servicio_de(datos, provs)[0]
             self.titulo = titulo_de(reconectar, datos)
+            # Copia de la configuración: si algo falla o se cancela, se deja todo como estaba
+            try:
+                self.copia_config = ruta_config_rclone().read_bytes()
+            except OSError:
+                self.copia_config = None
             QTimer.singleShot(0, self._crear)
         elif tipo_inicial:
             self._seleccionar(tipo_inicial)
@@ -2118,7 +2189,7 @@ class Asistente(QDialog):
         if self.tipo_rclone == "iclouddrive" and nombre == "password":
             etiqueta_t, ayuda = ("Tu contraseña de Apple",
                                  "La misma que usas en tu iPhone para la App Store o iCloud. "
-                                 "Se guarda cifrada en este ordenador.")
+                                 "Se guarda en este ordenador, en un archivo que solo tu usuario puede abrir.")
         ayuda_original = (opt.get("Help") or "").strip()
         legible = nombre.replace("config_", "").replace("_", " ")
         if not etiqueta_t:
@@ -2225,7 +2296,7 @@ class Asistente(QDialog):
                 self.lz.lanzar(tarea_montar, [self.remoto],
                                lambda r2: self._exito() if r2[0] else self._verificado(("montar",)))
             else:
-                run([RCLONE, "config", "delete", self.remoto])
+                self._deshacer()
                 self._final(False, "No se añadió", "Puedes intentarlo de nuevo cuando quieras.")
 
     def _exito(self):
@@ -2249,9 +2320,25 @@ class Asistente(QDialog):
                       "<br><br>Consejo: también la tienes en el panel izquierdo del explorador de "
                       "archivos, en «Mis nubes».").format(base=BASE.name, carpeta=self.ruta_final.name))
 
-    def _fallo(self, msg):
-        if self.remoto and not self.reconectar:
+    def _deshacer(self):
+        """Deja la configuración como estaba (nube nueva: se borra; reconexión: se restaura)."""
+        if not self.remoto:
+            return
+        if self.reconectar:
+            if getattr(self, "copia_config", None) is not None:
+                try:
+                    ruta = ruta_config_rclone()
+                    tmp = ruta.with_suffix(".restaurando")
+                    tmp.write_bytes(self.copia_config)
+                    tmp.chmod(0o600)
+                    os.replace(tmp, ruta)
+                except OSError:
+                    pass
+        else:
             run([RCLONE, "config", "delete", self.remoto])
+
+    def _fallo(self, msg):
+        self._deshacer()
         explicacion, detalle = traducir_error(msg)
         self._final(False, "No se pudo conectar", explicacion, detalle)
 
@@ -2260,8 +2347,8 @@ class Asistente(QDialog):
         p = PROCESO["p"]
         if p:
             p.kill()
-        if self.remoto and self.pilas.currentIndex() != P_FIN and not self.reconectar:
-            run([RCLONE, "config", "delete", self.remoto])
+        if self.pilas.currentIndex() != P_FIN:
+            self._deshacer()
         self.reject()
 
     def done(self, r):
@@ -2439,7 +2526,9 @@ class Tarjeta(QFrame):
         self.es_icloud = datos.get("type") == "iclouddrive"
         self.nombre = titulo_de(self.remoto, datos)
         self.ruta = carpeta_de(self.remoto, datos)
-        self.ico.setPixmap(icono_servicio(clave, servicio, 48))
+        if getattr(self, "_clave_icono", None) != clave:
+            self._clave_icono = clave
+            self.ico.setPixmap(icono_servicio(clave, servicio, 48))
         self.titulo.setText(self.nombre)
         extra = " · " + _("solo lectura") if clave == TIPO_FOTOS else ""
         self.sub.setText(f"{servicio}{extra} · {BASE.name} › {self.ruta.name}")
@@ -2582,22 +2671,27 @@ class Ventana(QWidget):
         for r in list(self.tarjetas):
             if r not in dump:
                 self.tarjetas.pop(r).deleteLater()
-        for i, r in enumerate(sorted(dump, key=lambda r: titulo_de(r, dump[r]).lower())):
+        orden = sorted(dump, key=lambda r: titulo_de(r, dump[r]).lower())
+        reordenar = orden != getattr(self, "_orden", None)
+        self._orden = orden
+        montajes = puntos_de_montaje()
+        for i, r in enumerate(orden):
             nueva = r not in self.tarjetas
             if nueva:
                 self.tarjetas[r] = Tarjeta(self, r)
             tj = self.tarjetas[r]
-            self.lista.insertWidget(i, tj)
+            if reordenar:
+                self.lista.insertWidget(i, tj)
             tj.actualizar(dump[r], self.provs)
             if nueva and r in self.cache_espacio:
-                usado, total, _ = self.cache_espacio[r]
+                usado, total, _fecha = self.cache_espacio[r]
                 tj.mostrar_espacio(usado, total)
             # OneDrive, Google… cada 10 min; iCloud Drive (hay que sumar archivos) cada 6 h
             cada = 6 * 3600 if dump[r].get("type") == "iclouddrive" else 600
             ultimo = self.espacio_pedido.get(r, 0)
             if dump[r].get("type") == "iclouddrive":
                 ultimo = max(ultimo, self.cache_espacio.get(r, [0, 0, 0])[2])
-            if time.time() - ultimo > cada and montado(tj.ruta):
+            if time.time() - ultimo > cada and os.path.abspath(str(tj.ruta)) in montajes:
                 self.espacio_pedido[r] = time.time()
                 self.lz.lanzar(tarea_espacio, [r, dump[r]], self._espacio)
         self.vacio.setVisible(not dump)
@@ -2841,7 +2935,7 @@ TRADUCCIONES["en"] = {
     "Usuario": "Username",
     "Tu nombre de usuario o correo.": "Your username or email.",
     "Contraseña": "Password",
-    "Se guarda cifrada en este ordenador.": "It is stored encrypted on this computer.",
+    "Se guarda en este ordenador, en un archivo que solo tu usuario puede abrir.": "It is stored on this computer, in a file only your user can open.",
     "Tu correo de Apple": "Your Apple email",
     "Es el correo con el que entras en tu iPhone o en icloud.com. Lo ves en el iPhone: Ajustes › (tu nombre, arriba del todo).": "It is the email you use on your iPhone or at icloud.com. You can see it on your iPhone: Settings › (your name, at the very top).",
     "Servidor": "Server",
@@ -2903,7 +2997,7 @@ TRADUCCIONES["en"] = {
     "¿Tu cuenta usa verificación en dos pasos?": "Does your account use two-step verification?",
     "Elige «Sí» si al entrar te piden un código además de la contraseña.": "Choose “Yes” if you are asked for a code as well as your password when you sign in.",
     "Tu contraseña de Apple": "Your Apple password",
-    "La misma que usas en tu iPhone para la App Store o iCloud. Se guarda cifrada en este ordenador.": "The same one you use on your iPhone for the App Store or iCloud. It is stored encrypted on this computer.",
+    "La misma que usas en tu iPhone para la App Store o iCloud. Se guarda en este ordenador, en un archivo que solo tu usuario puede abrir.": "The same one you use on your iPhone for the App Store or iCloud. It is stored on this computer, in a file only your user can open.",
     "¿Activar la opción «{opcion}»?": "Turn on the “{opcion}” option?",
     "Dato solicitado: «{opcion}»": "Requested setting: “{opcion}”",
     "Si no sabes qué poner, <b>deja lo que viene escrito y pulsa «Siguiente»</b>. Casi siempre es lo correcto.": "If you don't know what to enter, <b>leave what is already there and press “Next”</b>. It is almost always right.",

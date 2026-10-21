@@ -10,6 +10,10 @@
 </p>
 
 <p align="center">
+  <b>Español</b> · <a href="README.en.md">English</a>
+</p>
+
+<p align="center">
   <img src="capturas/principal.png" width="640" alt="Ventana principal de Mis nubes">
 </p>
 
@@ -44,6 +48,13 @@ Después de la primera vez, **Mis nubes** aparece en el menú de aplicaciones co
 - **Todo en español**, con los errores explicados en palabras sencillas.
 - **Diseño cuidado** inspirado en macOS, con modo claro y oscuro.
 - Atajo **«Mis nubes»** en el panel lateral del explorador de archivos (Dolphin).
+- **En español e inglés**, y preparado para más idiomas (ver abajo).
+
+## Idiomas
+
+La aplicación usa el idioma de tu sistema. También puedes cambiarlo en **ⓘ › Idioma**.
+Hoy está en **español** e **inglés**. ¿Quieres traducirla a otro idioma? Es solo un archivo de
+texto, sin programar: sigue la guía en [`idiomas/LEEME.md`](idiomas/LEEME.md).
 
 ## Preguntas frecuentes
 
@@ -72,10 +83,10 @@ python3 src/mis_nubes.py            # o ejecuta el programa directamente
 
 ## Créditos
 
-Creado por **Jose Callejas** y **Claude** (Anthropic).
+Creado por **Jose Callejas** ([@Callejasto](https://github.com/Callejasto)) y **Claude** (Anthropic).
 
-Funciona gracias a [rclone](https://rclone.org) (licencia MIT). Los iconos de los servicios provienen del tema libre [Papirus](https://github.com/PapirusDevelopmentTeam/papirus-icon-theme) (GPL-3.0), instalado desde los repositorios del sistema; las marcas y logotipos pertenecen a sus respectivos dueños. Este proyecto no está afiliado a Google, Microsoft, Apple ni a ningún otro servicio.
+Funciona gracias a [rclone](https://rclone.org) (licencia MIT). Los iconos de los servicios provienen del tema libre [Papirus](https://github.com/PapirusDevelopmentTeam/papirus-icon-theme) (GPL-3.0), instalado desde los repositorios del sistema; las marcas y logotipos pertenecen a sus respectivos dueños. Los iconos de Proton Drive y Koofr de la carpeta [`icons`](icons) son diseños originales de este proyecto, no sus logotipos oficiales. Este proyecto no está afiliado a Google, Microsoft, Apple ni a ningún otro servicio.
 
 ## Licencia
 
-[MIT](LICENSE) © 2026 Jose Callejas
+[MIT](LICENSE) © 2026 Jose Callejas (Callejasto)

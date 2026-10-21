@@ -28,6 +28,102 @@ from PyQt6.QtWidgets import (
 )
 
 APP = "Mis nubes"
+
+
+# ================================================================ idiomas
+# El programa está escrito en español y cada texto visible pasa por _().
+# Cada idioma es un catálogo «texto en español» → «texto traducido».
+# Para añadir un idioma: copia idiomas/en.json, traduce los valores y guárdalo
+# como idiomas/<código>.json (por ejemplo fr.json). Ver idiomas/LEEME.md.
+AJUSTES = Path.home() / ".config/mis-nubes/ajustes.json"
+TRADUCCIONES = {}        # catálogos incluidos; se rellenan al final del archivo
+CATALOGO = {}
+IDIOMA = "es"
+
+
+def _(texto):
+    """Traduce un texto al idioma activo (si no hay traducción, se queda en español)."""
+    if not isinstance(texto, str) or not texto:
+        return texto
+    return CATALOGO.get(texto, texto)
+
+
+def leer_ajustes():
+    try:
+        return json.loads(AJUSTES.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def guardar_ajuste(clave, valor):
+    datos = leer_ajustes()
+    datos[clave] = valor
+    AJUSTES.parent.mkdir(parents=True, exist_ok=True)
+    AJUSTES.write_text(json.dumps(datos, ensure_ascii=False, indent=2))
+
+
+def carpetas_idiomas():
+    aqui = Path(__file__).resolve().parent
+    return [aqui / "idiomas", aqui.parent / "idiomas",
+            Path.home() / ".local/share/mis-nubes/idiomas"]
+
+
+def catalogo(codigo):
+    """Catálogo de un idioma: el incluido más los archivos idiomas/<código>.json."""
+    cat = dict(TRADUCCIONES.get(codigo, {}))
+    encontrado = codigo in TRADUCCIONES
+    for carpeta in carpetas_idiomas():
+        f = carpeta / f"{codigo}.json"
+        try:
+            datos = json.loads(f.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        cat.update({k: v for k, v in datos.items() if not k.startswith("_") and v})
+        encontrado = True
+    return cat if encontrado else None
+
+
+def idiomas_disponibles():
+    codigos = {"es"} | set(TRADUCCIONES)
+    for carpeta in carpetas_idiomas():
+        if carpeta.is_dir():
+            codigos |= {f.stem for f in carpeta.glob("*.json") if len(f.stem) in (2, 3, 5)}
+    return sorted(codigos)
+
+
+def nombre_idioma(codigo):
+    nombres = {"es": "Español", "en": "English", "fr": "Français", "pt": "Português",
+               "it": "Italiano", "de": "Deutsch", "ca": "Català"}
+    return nombres.get(codigo, codigo)
+
+
+def cargar_idioma():
+    global IDIOMA, CATALOGO
+    elegido = leer_ajustes().get("idioma", "auto")
+    if elegido == "auto":
+        entorno = (os.environ.get("LANGUAGE") or os.environ.get("LC_ALL")
+                   or os.environ.get("LC_MESSAGES") or os.environ.get("LANG") or "es")
+        elegido = entorno.split(":")[0].split(".")[0].split("_")[0].lower() or "es"
+    if elegido == "es":
+        IDIOMA, CATALOGO = "es", {}
+        return
+    cat = catalogo(elegido)
+    if cat is None:                     # idioma sin traducción: inglés, que es el más común
+        elegido, cat = "en", catalogo("en") or {}
+    IDIOMA, CATALOGO = elegido, cat
+
+
+def elegir_carpeta_base():
+    """La carpeta de las nubes: se elige la primera vez según el idioma y no cambia después."""
+    global BASE
+    guardada = leer_ajustes().get("carpeta")
+    if guardada:
+        BASE = Path(guardada)
+    elif (HOME / "Nube").exists():
+        BASE = HOME / "Nube"
+    else:
+        BASE = HOME / _("Nube")
+    guardar_ajuste("carpeta", str(BASE))
 HOME = Path.home()
 BASE = HOME / "Nube"
 UNIT_DIR = HOME / ".config/systemd/user"
@@ -222,13 +318,13 @@ EJEMPLOS_ES = {
 }
 
 
-def texto_ejemplo(opcion, valor, ayuda):
+def texto_ejemplo(opcion, valor, ayuda):  # noqa: C901
     """Texto en español para una opción de lista, sin mostrar inglés."""
     if (opcion, valor) in EJEMPLOS_ES:
-        return EJEMPLOS_ES[(opcion, valor)]
+        return _(EJEMPLOS_ES[(opcion, valor)])
     if opcion.startswith("config_") and ayuda:
         return ayuda.splitlines()[0]  # nombres de unidades, sitios, etc.
-    return valor or "(dejar vacío)"
+    return valor or _("(dejar vacío)")
 
 
 ERRORES = [
@@ -276,16 +372,16 @@ def traducir_error(msg):
     bajo = (msg or "").lower()
     for claves, texto in ERRORES:
         if any(c in bajo for c in claves):
-            return texto, msg
-    return ("Ha ocurrido un problema al conectar. Revisa los datos e inténtalo de nuevo.", msg)
+            return _(texto), msg
+    return (_("Ha ocurrido un problema al conectar. Revisa los datos e inténtalo de nuevo."), msg)
 
 
 def _caja(padre, icono, titulo, texto, botones):
     box = QMessageBox(padre)
     box.setIcon(icono)
-    box.setWindowTitle(titulo)
-    box.setText(texto)
-    creados = [box.addButton(t, rol) for t, rol in botones]
+    box.setWindowTitle(_(titulo))
+    box.setText(_(texto))
+    creados = [box.addButton(_(t), rol) for t, rol in botones]
     box.setDefaultButton(creados[0])
     box.exec()
     return creados.index(box.clickedButton()) if box.clickedButton() in creados else -1
@@ -302,7 +398,7 @@ def avisar(padre, texto, detalles=None):
                  [("Entendido", QMessageBox.ButtonRole.AcceptRole),
                   ("Ver detalles técnicos", QMessageBox.ButtonRole.ActionRole)]) == 1:
             _caja(padre, QMessageBox.Icon.Information, "Detalles técnicos",
-                  "Esta información sirve para quien te ayude a resolver el problema:\n\n" + detalles,
+                  _("Esta información sirve para quien te ayude a resolver el problema:") + "\n\n" + detalles,
                   [("Cerrar", QMessageBox.ButtonRole.AcceptRole)])
     else:
         _caja(padre, QMessageBox.Icon.Warning, APP, texto,
@@ -311,11 +407,11 @@ def avisar(padre, texto, detalles=None):
 
 def pedir_texto(padre, titulo, etiqueta, valor=""):
     d = QInputDialog(padre)
-    d.setWindowTitle(titulo)
-    d.setLabelText(etiqueta)
+    d.setWindowTitle(_(titulo))
+    d.setLabelText(_(etiqueta))
     d.setTextValue(valor)
-    d.setOkButtonText("Guardar")
-    d.setCancelButtonText("Cancelar")
+    d.setOkButtonText(_("Guardar"))
+    d.setCancelButtonText(_("Cancelar"))
     ok = d.exec() == QDialog.DialogCode.Accepted
     return d.textValue(), ok
 
@@ -461,7 +557,7 @@ def proveedores():
 
 def nombre_servicio(tipo, provs):
     if tipo in NOMBRES:
-        return NOMBRES[tipo]
+        return _(NOMBRES[tipo])
     for p in provs:
         if p["Prefix"] == tipo:
             d = p["Description"].split(",")[0].split("(")[0].strip()
@@ -514,7 +610,8 @@ def preparar_sistema():
         menu.parent.mkdir(parents=True, exist_ok=True)
         menu.write_text(
             "[Desktop Entry]\nType=Application\nName=Mis nubes\n"
-            "Comment=Tus nubes como carpetas normales\n"
+            f"Name[en]={TRADUCCIONES.get('en', {}).get('Mis nubes', 'Mis nubes')}\n"
+            f"Comment={_('Tus nubes como carpetas normales')}\n"
             f"Exec=python3 {destino}\nIcon=folder-cloud\nTerminal=false\n"
             "Categories=Utility;Network;\n")
     except OSError:
@@ -636,7 +733,7 @@ def tarea_renombrar(remoto, nuevo):
         return (False, traducir_error(error_rclone(r.stderr))[0])
     if unidad_existia and not montar(remoto):
         return (False, "Nombre cambiado, pero no se pudo abrir la carpeta.")
-    return (True, f"Ahora se llama «{nuevo}».")
+    return (True, _("Ahora se llama «{nombre}».").format(nombre=nuevo))
 
 
 def ofuscar(texto):
@@ -654,7 +751,7 @@ class Tarea(QThread):
         try:
             res = self.fn(*self.args)
         except Exception as e:  # noqa: BLE001
-            res = (False, f"Error inesperado: {e}")
+            res = (False, _("Error inesperado: {error}").format(error=e))
         self.hecho.emit(res)
 
 
@@ -688,8 +785,8 @@ def titulo_grande(texto, extra=6):
 
 
 # ================================================================ versión y créditos
-VERSION = "1.0"
-CREDITOS = "Creado por Jose Callejas y Claude (Anthropic)"
+VERSION = "1.1"
+CREDITOS = "Creado por Jose Callejas (Callejasto) y Claude (Anthropic)"
 
 # ================================================================ icono propio
 ICONO_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
@@ -758,7 +855,7 @@ def instalar_extras():
                 icono = ('<info><metadata owner="http://freedesktop.org">'
                          '<bookmark:icon name="mis-nubes"/></metadata></info>'
                          if "xmlns:bookmark" in t else "")
-                entrada = (f' <bookmark href="{destino}">\n  <title>Mis nubes</title>\n'
+                entrada = (f' <bookmark href="{destino}">\n  <title>{_(APP)}</title>\n'
                            f'  {icono}\n </bookmark>\n')
                 i = t.rindex("</xbel>")
                 xbel.write_text(t[:i] + entrada + t[i:])
@@ -884,6 +981,62 @@ OFICIALES = {
     "smb": ["folder-network"], "sftp": ["folder-remote"], "ftp": ["folder-remote"],
 }
 PAPIRUS = [Path("/usr/share/icons/Papirus"), HOME / ".local/share/icons/Papirus"]
+
+# Iconos propios (diseños originales de Mis nubes) para servicios que Papirus no trae.
+# No son los logotipos oficiales de esas marcas.
+ICONOS_PROPIOS = {
+    "protondrive": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="fondo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#A88EFF"/>
+      <stop offset="1" stop-color="#5E3CF0"/>
+    </linearGradient>
+    <linearGradient id="carpeta" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#EAE4FF"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#fondo)"/>
+  <path fill="#3F22B8" opacity="0.25" d="M110 182 a24 24 0 0 1 24 -24 h86 l32 32 h132 a24 24 0 0 1 24 24 v168 a24 24 0 0 1 -24 24 h-250 a24 24 0 0 1 -24 -24 z"/>
+  <path fill="url(#carpeta)" d="M104 168 a24 24 0 0 1 24 -24 h88 l32 32 h136 a24 24 0 0 1 24 24 v168 a24 24 0 0 1 -24 24 h-256 a24 24 0 0 1 -24 -24 z"/>
+  <path d="M226 270 v-22 a30 30 0 0 1 60 0 v22" fill="none" stroke="#6A48F5" stroke-width="16" stroke-linecap="round"/>
+  <rect x="208" y="266" width="96" height="76" rx="16" fill="#6A48F5"/>
+  <circle cx="256" cy="296" r="11" fill="#FFFFFF"/>
+  <rect x="250.5" y="298" width="11" height="24" rx="5.5" fill="#FFFFFF"/>
+</svg>
+""",
+    "koofr": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="fondo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4FE0C4"/>
+      <stop offset="1" stop-color="#0B8F84"/>
+    </linearGradient>
+    <linearGradient id="nube" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E2F7F3"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#fondo)"/>
+  <path fill="#05564F" opacity="0.22" transform="translate(0,34)"
+        d="M150 360 C98 360 70 326 70 290 C70 252 98 224 136 220 C142 168 186 130 240 130
+           C284 130 320 156 336 194 C344 192 352 190 362 190 C406 190 442 226 442 272
+           C442 320 406 360 358 360 Z"/>
+  <path fill="url(#nube)" transform="translate(0,22)"
+        d="M150 360 C98 360 70 326 70 290 C70 252 98 224 136 220 C142 168 186 130 240 130
+           C284 130 320 156 336 194 C344 192 352 190 362 190 C406 190 442 226 442 272
+           C442 320 406 360 358 360 Z"/>
+  <g fill="none" stroke="#0E9C8F" stroke-width="15" stroke-linecap="round">
+    <path d="M209 290 A52 52 0 0 1 303 274"/>
+    <path d="M303 322 A52 52 0 0 1 209 338"/>
+  </g>
+  <g fill="#0E9C8F">
+    <polygon points="290,262 322,262 310,292"/>
+    <polygon points="222,350 190,350 202,320"/>
+  </g>
+</svg>
+""",
+}
+ICONOS_CACHE = HOME / ".cache/mis-nubes/iconos"
 _ICONOS = {}
 
 
@@ -891,7 +1044,7 @@ def _icono_oficial(clave):
     if clave in _ICONOS:
         return _ICONOS[clave]
     encontrado = None
-    for nombre in OFICIALES.get(clave, []):
+    for nombre in OFICIALES.get(clave, []) if clave not in ICONOS_PROPIOS else []:
         for base in PAPIRUS:
             for sub in ("64x64/apps", "48x48/apps", "64x64/places", "48x48/places"):
                 f = base / sub / f"{nombre}.svg"
@@ -902,6 +1055,15 @@ def _icono_oficial(clave):
                 break
         if encontrado:
             break
+    if not encontrado and clave in ICONOS_PROPIOS:
+        try:
+            ICONOS_CACHE.mkdir(parents=True, exist_ok=True)
+            f = ICONOS_CACHE / f"{clave}.svg"
+            if not f.exists() or f.read_text() != ICONOS_PROPIOS[clave]:
+                f.write_text(ICONOS_PROPIOS[clave])
+            encontrado = QIcon(str(f))
+        except OSError:
+            pass
     _ICONOS[clave] = encontrado
     return encontrado
 
@@ -939,14 +1101,15 @@ def servicio_de(datos, provs):
     """(clave para el icono, nombre visible) de una conexión de rclone."""
     tipo = datos.get("type", "")
     if tipo == "iclouddrive" and datos.get("service") == "photos":
-        return TIPO_FOTOS, "iCloud Fotos"
+        return TIPO_FOTOS, _("iCloud Fotos")
     return tipo, nombre_servicio(tipo, provs)
 
 
 def tamano(n):
     for unidad in ("B", "KB", "MB", "GB", "TB", "PB"):
         if n < 1024 or unidad == "PB":
-            return f"{n:.1f} {unidad}".replace(".0 ", " ").replace(".", ",")
+            t = f"{n:.1f} {unidad}".replace(".0 ", " ")
+            return t if IDIOMA == "en" else t.replace(".", ",")
         n /= 1024
 
 
@@ -1083,7 +1246,7 @@ def circulo(ok, tam=72):
 
 
 def etiqueta(texto, nombre=None, ajuste=True):
-    l = QLabel(texto)
+    l = QLabel(_(texto))
     if nombre:
         l.setObjectName(nombre)
     l.setWordWrap(ajuste)
@@ -1091,7 +1254,7 @@ def etiqueta(texto, nombre=None, ajuste=True):
 
 
 def boton(texto, nombre=None, accion=None):
-    b = QPushButton(texto)
+    b = QPushButton(_(texto))
     if nombre:
         b.setObjectName(nombre)
     b.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1110,7 +1273,7 @@ def sombra(w):
 
 def pastilla(lbl, texto, color):
     c = QColor(color)
-    lbl.setText(texto)
+    lbl.setText(_(texto))
     lbl.setStyleSheet(f"color: {color}; background: rgba({c.red()},{c.green()},{c.blue()},40);"
                       "border-radius: 9px; padding: 2px 10px; font-size: 9pt; font-weight: 600;")
 
@@ -1129,7 +1292,7 @@ def caja_pasos(pasos):
         n.setObjectName("numero")
         n.setAlignment(Qt.AlignmentFlag.AlignCenter)
         fila.addWidget(n, 0, Qt.AlignmentFlag.AlignTop)
-        t = etiqueta(texto)
+        t = etiqueta(_(texto))
         t.setTextFormat(Qt.TextFormat.RichText)
         fila.addWidget(t, 1)
         lay.addLayout(fila)
@@ -1210,14 +1373,14 @@ def necesitas(tipo, provs, servicio):
     if tipo in NECESITAS:
         return NECESITAS[tipo]
     if es_oauth(tipo, provs):
-        return [f"Tu correo y contraseña de {servicio}.", NAVEGADOR]
-    return [f"Tu usuario y contraseña de {servicio}.",
+        return [_("Tu correo y contraseña de {servicio}.").format(servicio=servicio), NAVEGADOR]
+    return [_("Tu usuario y contraseña de {servicio}.").format(servicio=servicio),
             "Si te pide algún dato que no conoces, deja lo que venga escrito: casi siempre es lo correcto."]
 
 
 def nombre_servicio2(tipo, provs):  # noqa: D103
     if tipo == TIPO_FOTOS:
-        return "iCloud Fotos"
+        return _("iCloud Fotos")
     return nombre_servicio(tipo, provs)
 
 
@@ -1231,7 +1394,7 @@ class Asistente(QDialog):
     def __init__(self, padre, provs, existentes, tipo_inicial=None, nombre_inicial="",
                  reconectar=None):
         super().__init__(padre)
-        self.setWindowTitle("Añadir nube")
+        self.setWindowTitle(_("Añadir nube"))
         self.setWindowIcon(icono_app())
         self.setMinimumSize(640, 600)
         self.provs = provs
@@ -1260,8 +1423,8 @@ class Asistente(QDialog):
         raiz.addWidget(self.pilas, 1)
 
         pie = QHBoxLayout()
-        self.experto = QCheckBox("Modo experto")
-        self.experto.setToolTip("Muestra también las preguntas técnicas. No hace falta para casi nadie.")
+        self.experto = QCheckBox(_("Modo experto"))
+        self.experto.setToolTip(_("Muestra también las preguntas técnicas. No hace falta para casi nadie."))
         pie.addWidget(self.experto)
         pie.addStretch()
         self.btn_cancelar = boton("Cancelar", None, self.cancelar)
@@ -1282,7 +1445,7 @@ class Asistente(QDialog):
 
         if reconectar:
             datos = existentes.get(reconectar, {})
-            self.setWindowTitle("Volver a iniciar sesión")
+            self.setWindowTitle(_("Volver a iniciar sesión"))
             self.remoto = reconectar
             self.tipo = servicio_de(datos, provs)[0]
             self.titulo = titulo_de(reconectar, datos)
@@ -1303,11 +1466,11 @@ class Asistente(QDialog):
         partes = []
         for i, e in enumerate(ETAPAS):
             if i == actual:
-                partes.append(f"<b style='color:{T['acento']}'>● {e}</b>")
+                partes.append(f"<b style='color:{T['acento']}'>● {_(e)}</b>")
             elif i < actual:
-                partes.append(f"<span style='color:{T['verde']}'>✓ {e}</span>")
+                partes.append(f"<span style='color:{T['verde']}'>✓ {_(e)}</span>")
             else:
-                partes.append(f"<span style='color:{T['gris']}'>○ {e}</span>")
+                partes.append(f"<span style='color:{T['gris']}'>○ {_(e)}</span>")
         self.etapas.setText("&nbsp;&nbsp;&nbsp;›&nbsp;&nbsp;&nbsp;".join(partes))
         self.experto.setVisible(pagina in (P_SERVICIO, P_NOMBRE) and not self.reconectar)
         self.btn_sig.setVisible(pagina in (P_SERVICIO, P_NOMBRE, P_PREGUNTA, P_FIN))
@@ -1317,7 +1480,7 @@ class Asistente(QDialog):
             self.btn_otro.hide()
         textos = {P_SERVICIO: "Continuar", P_NOMBRE: "Empezar", P_PREGUNTA: "Siguiente"}
         if pagina in textos:
-            self.btn_sig.setText(textos[pagina])
+            self.btn_sig.setText(_(textos[pagina]))
 
     def _servicio(self):
         return nombre_servicio2(self.tipo, self.provs) if self.tipo else ""
@@ -1331,7 +1494,7 @@ class Asistente(QDialog):
         l.addWidget(etiqueta("¿Qué nube quieres añadir?", "titulo"))
         l.addWidget(etiqueta("Haz clic en una. Si no la ves, escríbela en el buscador.", "gris"))
         self.buscar = QLineEdit()
-        self.buscar.setPlaceholderText("Buscar un servicio…  (por ejemplo: dropbox, nextcloud, mega)")
+        self.buscar.setPlaceholderText(_("Buscar un servicio…  (por ejemplo: dropbox, nextcloud, mega)"))
         self.buscar.setClearButtonEnabled(True)
         self.buscar.textChanged.connect(self._filtrar)
         l.addWidget(self.buscar)
@@ -1363,11 +1526,12 @@ class Asistente(QDialog):
         resto = [p["Prefix"] for p in self.provs if p["Prefix"] not in dict(POPULARES)]
         for tipo in sorted(resto, key=lambda t: nombre_servicio(t, self.provs).lower()):
             self._item(tipo, nombre_servicio(tipo, self.provs), False)
-        self.ver_todos.setText(f"Ver los {self.lista.count()} servicios disponibles")
+        self.ver_todos.setText(_("Ver los {n} servicios disponibles").format(n=self.lista.count()))
         self._filtrar("")
         self.pilas.addWidget(w)
 
     def _item(self, tipo, texto, popular):
+        texto = _(texto)
         corto = texto.split(" (")[0]
         it = QListWidgetItem(QIcon(icono_servicio(tipo, texto, 52)), corto)
         it.setData(Qt.ItemDataRole.UserRole, tipo)
@@ -1379,8 +1543,8 @@ class Asistente(QDialog):
 
     def _alternar_todos(self):
         self.todos = not self.todos
-        self.ver_todos.setText("Ver solo los más usados" if self.todos
-                               else f"Ver los {self.lista.count()} servicios disponibles")
+        self.ver_todos.setText(_("Ver solo los más usados") if self.todos
+                               else _("Ver los {n} servicios disponibles").format(n=self.lista.count()))
         self._filtrar(self.buscar.text())
 
     def _filtrar(self, texto):
@@ -1419,7 +1583,7 @@ class Asistente(QDialog):
         l.addSpacing(4)
         l.addWidget(etiqueta("<b>Ponle un nombre</b>"))
         self.nombre = QLineEdit()
-        self.nombre.setPlaceholderText("Por ejemplo: Drive del trabajo, Fotos de casa…")
+        self.nombre.setPlaceholderText(_("Por ejemplo: Drive del trabajo, Fotos de casa…"))
         self.nombre.textChanged.connect(self._vista_carpeta)
         self.nombre.returnPressed.connect(self.siguiente)
         l.addWidget(self.nombre)
@@ -1438,12 +1602,12 @@ class Asistente(QDialog):
         self.n_servicio.setText(servicio)
         if self.tipo == TIPO_FOTOS:
             self.n_explica.setText(
-                "Tus fotos aparecerán como una carpeta, ordenadas por álbumes. <b>Se ven en línea: no "
+                _("Tus fotos aparecerán como una carpeta, ordenadas por álbumes. <b>Se ven en línea: no "
                 "se copian a tu ordenador</b> (solo se guardan un rato las que abres, para que vayan "
                 "rápido).<br>Es de <b>solo lectura</b>: puedes ver y copiar fotos, pero no borrar ni "
-                "subir desde aquí. Para eso, usa tu iPhone.")
+                "subir desde aquí. Para eso, usa tu iPhone."))
         else:
-            self.n_explica.setText("Tus archivos aparecerán como una carpeta normal de tu ordenador.")
+            self.n_explica.setText(_("Tus archivos aparecerán como una carpeta normal de tu ordenador."))
         if not self.nombre.text():
             self.nombre.setText(self._nombre_libre(servicio.split(" (")[0].split(" / ")[0]))
         while self.n_necesitas.count():
@@ -1457,8 +1621,8 @@ class Asistente(QDialog):
         self.nombre.selectAll()
 
     def _vista_carpeta(self, texto):
-        self.n_carpeta.setText(f"📁  Se creará la carpeta:  Carpeta personal › Nube › "
-                               f"<b>{limpiar_nombre(texto or 'Nube')}</b>")
+        self.n_carpeta.setText("📁  " + _("Se creará la carpeta:  Carpeta personal › {base} › <b>{nombre}</b>")
+                               .format(base=BASE.name, nombre=limpiar_nombre(texto or BASE.name)))
 
     def _usados(self):
         return {limpiar_nombre(titulo_de(r, d)).lower() for r, d in self.existentes.items()}
@@ -1488,7 +1652,7 @@ class Asistente(QDialog):
         self.p_texto = QLineEdit()
         self.p_texto.returnPressed.connect(self.siguiente)
         self.p_combo = QComboBox()
-        self.p_mostrar = QCheckBox("Mostrar lo que escribo")
+        self.p_mostrar = QCheckBox(_("Mostrar lo que escribo"))
         self.p_mostrar.toggled.connect(lambda v: self.p_texto.setEchoMode(
             QLineEdit.EchoMode.Normal if v else QLineEdit.EchoMode.Password))
         self.p_error = etiqueta("", "error")
@@ -1554,15 +1718,15 @@ class Asistente(QDialog):
 
     def _mostrar_navegador(self):
         servicio = self._servicio()
-        self.b_titulo.setText(f"Inicia sesión en {servicio}")
+        self.b_titulo.setText(_("Inicia sesión en {servicio}").format(servicio=servicio))
         while self.b_pasos.count():
             it = self.b_pasos.takeAt(0)
             if it.widget():
                 it.widget().hide()
                 it.widget().deleteLater()
         self.b_pasos.addWidget(caja_pasos([
-            f"Mira tu navegador (Firefox, Chrome…): se ha abierto una página de <b>{servicio}</b>. "
-            "Si no la ves, búscala en la barra de tareas, abajo.",
+            _("Mira tu navegador (Firefox, Chrome…): se ha abierto una página de <b>{servicio}</b>. "
+              "Si no la ves, búscala en la barra de tareas, abajo.").format(servicio=servicio),
             "Elige tu cuenta, o escribe tu correo y tu contraseña.",
             "Te preguntará si das permiso a <b>«rclone»</b> (es el programa que conecta tu nube; "
             "es seguro). Pulsa <b>«Permitir»</b> o <b>«Aceptar»</b>.",
@@ -1572,13 +1736,13 @@ class Asistente(QDialog):
         self.enlace_auth = None
         self.b_abrir.setEnabled(False)
         self.b_copiar.setEnabled(False)
-        self.b_abrir.setText("Preparando el enlace…")
+        self.b_abrir.setText(_("Preparando el enlace…"))
         self.b_copiado.setText("")
         self.ir(P_NAVEGADOR)
 
     def _enlace(self, url):
         self.enlace_auth = url
-        self.b_abrir.setText("Abrir la página de inicio de sesión")
+        self.b_abrir.setText(_("Abrir la página de inicio de sesión"))
         self.b_abrir.setEnabled(True)
         self.b_copiar.setEnabled(True)
 
@@ -1589,8 +1753,8 @@ class Asistente(QDialog):
     def _copiar_enlace(self):
         if self.enlace_auth:
             QGuiApplication.clipboard().setText(self.enlace_auth)
-            self.b_copiado.setText("✓ Copiado. Ahora abre tu navegador, haz clic en la barra de "
-                                   "direcciones (arriba), pega con Ctrl+V y pulsa Intro.")
+            self.b_copiado.setText(_("✓ Copiado. Ahora abre tu navegador, haz clic en la barra de "
+                                   "direcciones (arriba), pega con Ctrl+V y pulsa Intro."))
 
     # ---------- página: espera
     def _pagina_espera(self):
@@ -1617,8 +1781,8 @@ class Asistente(QDialog):
     def _esperar(self, titulo, texto, progreso=None):
         if self.tipo:
             self.e_icono.setPixmap(icono_servicio(self.tipo, self._servicio(), 64))
-        self.e_titulo.setText(titulo)
-        self.e_texto.setText(texto)
+        self.e_titulo.setText(_(titulo))
+        self.e_texto.setText(_(texto))
         if progreso is None:
             self.e_barra.setRange(0, 0)
         else:
@@ -1648,19 +1812,19 @@ class Asistente(QDialog):
     def _final(self, ok, titulo, texto, detalle=None):
         self.ok_final = ok
         self.f_icono.setPixmap(circulo(ok))
-        self.f_titulo.setText(titulo)
-        self.f_texto.setText(texto)
-        self.f_detalle.setText(f"Detalle técnico (para quien te ayude): {detalle}"
-                               if detalle and detalle != texto else "")
+        self.f_titulo.setText(_(titulo))
+        self.f_texto.setText(_(texto))
+        self.f_detalle.setText(_("Detalle técnico (para quien te ayude): {detalle}").format(
+            detalle=detalle) if detalle and detalle != texto else "")
         self.f_detalle.setVisible(bool(self.f_detalle.text()))
         self.ir(P_FIN)
         if ok:
-            self.btn_sig.setText("Listo")
-            self.btn_otro.setText("Abrir la carpeta")
+            self.btn_sig.setText(_("Listo"))
+            self.btn_otro.setText(_("Abrir la carpeta"))
             self.btn_otro.setVisible(bool(self.ruta_final))
         else:
-            self.btn_sig.setText("Intentar de nuevo")
-            self.btn_otro.setText("Cerrar")
+            self.btn_sig.setText(_("Intentar de nuevo"))
+            self.btn_otro.setText(_("Cerrar"))
             self.btn_otro.show()
         self.raise_()
         self.activateWindow()
@@ -1788,17 +1952,17 @@ class Asistente(QDialog):
         ayuda_original = (opt.get("Help") or "").strip()
         legible = nombre.replace("config_", "").replace("_", " ")
         if not etiqueta_t:
-            etiqueta_t = (f"¿Activar la opción «{legible}»?" if opt.get("Type") == "bool"
-                          else f"Dato solicitado: «{legible}»")
+            etiqueta_t = (_("¿Activar la opción «{opcion}»?") if opt.get("Type") == "bool"
+                          else _("Dato solicitado: «{opcion}»")).format(opcion=legible)
             ayuda = ("Si no sabes qué poner, <b>deja lo que viene escrito y pulsa «Siguiente»</b>. "
                      "Casi siempre es lo correcto.")
         original = ayuda_original if nombre not in TRADUCCION else ""
+        ayuda = _(ayuda or "").replace("\n", "<br>")
         if not opt.get("Required"):
-            ayuda = (ayuda or "") + ("<br><br><span style='color:%s'>Este dato es opcional.</span>"
-                                     % T["gris"])
+            ayuda += _("<br><br><span style='color:%s'>Este dato es opcional.</span>") % T["gris"]
         if error:
             error = "⚠  " + traducir_error(error)[0]
-        self._pregunta(etiqueta_t, (ayuda or "").replace("\n", "<br>"), error, opt, original)
+        self._pregunta(_(etiqueta_t), ayuda, error, opt, original)
 
     def _pregunta(self, titulo, ayuda, error, opt, original=""):
         """Muestra una pregunta (de rclone o de iCloud Fotos)."""
@@ -1809,10 +1973,10 @@ class Asistente(QDialog):
         self.p_original.setText(original)
         self.p_ver_original.setChecked(False)
         self.p_ver_original.setVisible(bool(original))
-        self.p_titulo.setText(titulo)
-        self.p_ayuda.setText(ayuda)
+        self.p_titulo.setText(_(titulo))
+        self.p_ayuda.setText(_(ayuda))
         self.p_caja.setVisible(bool(ayuda))
-        self.p_error.setText(error or "")
+        self.p_error.setText(_(error) or "")
         self.p_error.setVisible(bool(error))
         nombre = opt.get("Name", "")
         ejemplos = opt.get("Examples") or []
@@ -1824,11 +1988,11 @@ class Asistente(QDialog):
             self.p_combo.clear()
             self.p_combo.setEditable(not es_bool and not opt.get("Exclusive"))
             if es_bool:
-                self.p_combo.addItem("Sí", "true")
-                self.p_combo.addItem("No", "false")
+                self.p_combo.addItem(_("Sí"), "true")
+                self.p_combo.addItem(_("No"), "false")
             else:
                 if not opt.get("Exclusive") and defecto == "" and not opt.get("Required"):
-                    self.p_combo.addItem("(dejar vacío)", "")
+                    self.p_combo.addItem(_("(dejar vacío)"), "")
                 for e in ejemplos:
                     v = e.get("Value", "")
                     self.p_combo.addItem(texto_ejemplo(nombre, v, e.get("Help") or ""), v)
@@ -1841,7 +2005,7 @@ class Asistente(QDialog):
             self.p_texto.setEchoMode(QLineEdit.EchoMode.Password if opt.get("IsPassword")
                                      else QLineEdit.EchoMode.Normal)
             self.p_texto.setText("" if opt.get("IsPassword") else defecto)
-            self.p_texto.setPlaceholderText(PLACEHOLDER.get(nombre, ""))
+            self.p_texto.setPlaceholderText(_(PLACEHOLDER.get(nombre, "")))
             self.p_texto.show()
             self.p_combo.hide()
             self.p_texto.setFocus()
@@ -1879,12 +2043,13 @@ class Asistente(QDialog):
                         "Tu cuenta quedó guardada, pero no se pudo abrir la carpeta. Cierra esta "
                         "ventana y pulsa «Reintentar» en la tarjeta de esta nube.")
             self.resultado = self.remoto
-            self.btn_sig.setText("Cerrar")
+            self.btn_sig.setText(_("Cerrar"))
             self.ok_final = True
         else:
             explicacion = traducir_error(res[1])[0]
-            if confirmar(self, f"Los datos se guardaron, pero no pudimos comprobar que funcionen:\n\n"
-                               f"{explicacion}\n\n¿Quieres guardarla de todas formas?",
+            if confirmar(self, _("Los datos se guardaron, pero no pudimos comprobar que funcionen:"
+                                 "\n\n{explicacion}\n\n¿Quieres guardarla de todas formas?")
+                         .format(explicacion=explicacion),
                          si="Guardar igualmente", no="No guardar"):
                 self._esperar("Abriendo la carpeta…", "Un momento.")
                 self.lz.lanzar(tarea_montar, [self.remoto],
@@ -1897,21 +2062,22 @@ class Asistente(QDialog):
         self.resultado = self.remoto
         self.ruta_final = carpeta_de(self.remoto, config_dump().get(self.remoto, {}))
         if self.reconectar:
-            self._final(True, "¡Sesión iniciada!", f"«{self.titulo}» vuelve a funcionar. "
-                        "Dentro de 30 días Apple te lo volverá a pedir.")
+            self._final(True, "¡Sesión iniciada!", _("«{nombre}» vuelve a funcionar. "
+                        "Dentro de 30 días Apple te lo volverá a pedir.").format(nombre=self.titulo))
             return
         if self.tipo == TIPO_FOTOS:
             self._final(True, "¡iCloud Fotos está listo!",
-                        f"Tus fotos están en la carpeta <b>Nube › {self.ruta_final.name}</b>, "
-                        "ordenadas por álbumes (todas juntas están en «All Photos»)."
-                        "<br><br>La primera vez puede tardar unos minutos en mostrar todas las "
-                        "fotos si tienes muchas. Las siguientes veces irá rápido.")
+                        _("Tus fotos están en la carpeta <b>{base} › {carpeta}</b>, "
+                          "ordenadas por álbumes (todas juntas están en «All Photos»)."
+                          "<br><br>La primera vez puede tardar unos minutos en mostrar todas las "
+                          "fotos si tienes muchas. Las siguientes veces irá rápido.")
+                        .format(base=BASE.name, carpeta=self.ruta_final.name))
             return
-        self._final(True, f"¡«{self.titulo}» está lista!",
-                    f"Tus archivos ya aparecen en la carpeta <b>Nube › {self.ruta_final.name}</b>."
-                    "<br>Se abrirá sola cada vez que enciendas el ordenador."
-                    "<br><br>Consejo: también la tienes en el panel izquierdo del explorador de "
-                    "archivos, en «Mis nubes».")
+        self._final(True, _("¡«{nombre}» está lista!").format(nombre=self.titulo),
+                    _("Tus archivos ya aparecen en la carpeta <b>{base} › {carpeta}</b>."
+                      "<br>Se abrirá sola cada vez que enciendas el ordenador."
+                      "<br><br>Consejo: también la tienes en el panel izquierdo del explorador de "
+                      "archivos, en «Mis nubes».").format(base=BASE.name, carpeta=self.ruta_final.name))
 
     def _fallo(self, msg):
         if self.remoto and not self.reconectar:
@@ -1946,7 +2112,7 @@ class Asistente(QDialog):
 class AcercaDe(QDialog):
     def __init__(self, padre):
         super().__init__(padre)
-        self.setWindowTitle("Acerca de Mis nubes")
+        self.setWindowTitle(_("Acerca de Mis nubes"))
         self.setFixedWidth(420)
         l = QVBoxLayout(self)
         l.setContentsMargins(30, 26, 30, 22)
@@ -1955,7 +2121,7 @@ class AcercaDe(QDialog):
         ico.setPixmap(icono_app().pixmap(96, 96))
         ico.setAlignment(Qt.AlignmentFlag.AlignCenter)
         l.addWidget(ico)
-        for texto, nombre in ((f"Mis nubes", "titulo"), (f"Versión {VERSION}", "gris"),
+        for texto, nombre in (("Mis nubes", "titulo"), (_("Versión {v}").format(v=VERSION), "gris"),
                               (CREDITOS, None),
                               ("Tus nubes como carpetas normales en Linux: Google Drive, OneDrive, "
                                "iCloud, Dropbox, MEGA y muchas más.", "gris"),
@@ -1965,7 +2131,28 @@ class AcercaDe(QDialog):
             e.setAlignment(Qt.AlignmentFlag.AlignCenter)
             l.addWidget(e)
         l.addSpacing(10)
+        # Idioma (Language): se guarda y se aplica al volver a abrir la aplicación
+        fila = QHBoxLayout()
+        fila.addStretch()
+        fila.addWidget(etiqueta("Idioma:", "gris", False))
+        self.idioma = QComboBox()
+        self.idioma.addItem(_("Automático (el del sistema)"), "auto")
+        for codigo in idiomas_disponibles():
+            self.idioma.addItem(nombre_idioma(codigo), codigo)
+        actual = leer_ajustes().get("idioma", "auto")
+        self.idioma.setCurrentIndex(max(self.idioma.findData(actual), 0))
+        self.idioma.currentIndexChanged.connect(self._cambiar_idioma)
+        fila.addWidget(self.idioma)
+        fila.addStretch()
+        l.addLayout(fila)
+        l.addSpacing(6)
         l.addWidget(boton("Cerrar", "primario", self.accept), 0, Qt.AlignmentFlag.AlignCenter)
+
+    def _cambiar_idioma(self):
+        guardar_ajuste("idioma", self.idioma.currentData())
+        if confirmar(self, "El idioma cambiará al volver a abrir Mis nubes. ¿Reiniciar ahora?",
+                     si="Reiniciar ahora", no="Más tarde"):
+            os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve())])
 
 
 # ================================================================ tarjetas
@@ -2013,13 +2200,13 @@ class Tarjeta(QFrame):
         self.btn.setMinimumWidth(140)
         fila.addWidget(self.btn, 0, Qt.AlignmentFlag.AlignVCenter)
         self.mas = boton("⋯", "redondo")
-        self.mas.setToolTip("Más opciones")
+        self.mas.setToolTip(_("Más opciones"))
         menu = QMenu(self)
-        menu.addAction("Abrir la carpeta", lambda: self.v.abrir(self.ruta))
-        self.accion_sesion = menu.addAction("Volver a iniciar sesión…", lambda: self.v.reconectar(self))
-        menu.addAction("Cambiar nombre…", lambda: self.v.renombrar(self))
+        menu.addAction(_("Abrir la carpeta"), lambda: self.v.abrir(self.ruta))
+        self.accion_sesion = menu.addAction(_("Volver a iniciar sesión…"), lambda: self.v.reconectar(self))
+        menu.addAction(_("Cambiar nombre…"), lambda: self.v.renombrar(self))
         menu.addSeparator()
-        menu.addAction("Desconectar…", lambda: self.v.quitar(self))
+        menu.addAction(_("Desconectar…"), lambda: self.v.quitar(self))
         self.mas.setMenu(menu)
         fila.addWidget(self.mas, 0, Qt.AlignmentFlag.AlignVCenter)
 
@@ -2043,13 +2230,13 @@ class Tarjeta(QFrame):
             self.barra_espacio.setRange(0, 1000)
             self.barra_espacio.setValue(int(usado * 1000 / total))
             self.barra_espacio.show()
-            self.espacio.setText(f"{tamano(usado)} usados de {tamano(total)}")
+            self.espacio.setText(_("{usado} usados de {total}").format(usado=tamano(usado), total=tamano(total)))
         elif self.datos.get("type") == "iclouddrive":
-            self.espacio.setText(f"Tus archivos ocupan {tamano(usado)} en iCloud Drive")
-            self.espacio.setToolTip("Apple no permite consultar el total de tu plan desde aquí. "
-                                    "Las fotos no se cuentan: ocupan aparte.")
+            self.espacio.setText(_("Tus archivos ocupan {usado} en iCloud Drive").format(usado=tamano(usado)))
+            self.espacio.setToolTip(_("Apple no permite consultar el total de tu plan desde aquí. "
+                                    "Las fotos no se cuentan: ocupan aparte."))
         else:
-            self.espacio.setText(f"{tamano(usado)} usados")
+            self.espacio.setText(_("{usado} usados").format(usado=tamano(usado)))
         self.espacio.show()
 
     def actualizar(self, datos, provs):
@@ -2060,8 +2247,8 @@ class Tarjeta(QFrame):
         self.ruta = carpeta_de(self.remoto, datos)
         self.ico.setPixmap(icono_servicio(clave, servicio, 48))
         self.titulo.setText(self.nombre)
-        extra = " · solo lectura" if clave == TIPO_FOTOS else ""
-        self.sub.setText(f"{servicio}{extra} · Nube › {self.ruta.name}")
+        extra = " · " + _("solo lectura") if clave == TIPO_FOTOS else ""
+        self.sub.setText(f"{servicio}{extra} · {BASE.name} › {self.ruta.name}")
         self.accion_sesion.setVisible(self.es_icloud)
         if self.ocupada:
             return
@@ -2075,7 +2262,7 @@ class Tarjeta(QFrame):
 
     def _estado(self, texto, color, boton_txt, modo, principal):
         pastilla(self.estado, texto, color)
-        self.btn.setText(boton_txt)
+        self.btn.setText(_(boton_txt))
         self.btn.setObjectName("primario" if principal else "")
         self.btn.style().unpolish(self.btn)
         self.btn.style().polish(self.btn)
@@ -2087,7 +2274,7 @@ class Ventana(QWidget):
     def __init__(self, aviso_inicial=None):
         super().__init__()
         self.setObjectName("raiz")
-        self.setWindowTitle(APP)
+        self.setWindowTitle(_(APP))
         self.setWindowIcon(icono_app())
         self.resize(780, 640)
         self.lz = Lanzador()
@@ -2147,7 +2334,8 @@ class Ventana(QWidget):
         pie = QHBoxLayout()
         self.aviso = etiqueta("", None)
         pie.addWidget(self.aviso, 1)
-        pie.addWidget(boton("Abrir carpeta Nube", None, lambda: self.abrir(BASE)))
+        pie.addWidget(boton(_("Abrir carpeta {base}").format(base=BASE.name), None,
+                            lambda: self.abrir(BASE)))
         pie.addWidget(boton("ⓘ", "redondo", lambda: AcercaDe(self).exec()))
         lay.addLayout(pie)
         creditos = etiqueta(CREDITOS, "pequeno")
@@ -2198,7 +2386,7 @@ class Ventana(QWidget):
 
     def mensaje(self, ok, texto):
         if ok:
-            self.aviso.setText(f"<span style='color:{T['verde']}'>✓ {texto}</span>")
+            self.aviso.setText(f"<span style='color:{T['verde']}'>✓ {_(texto)}</span>")
             QTimer.singleShot(8000, lambda: self.aviso.setText(""))
         else:
             self.aviso.setText("")
@@ -2252,8 +2440,9 @@ class Ventana(QWidget):
         self.lz.lanzar(tarea_renombrar, [tj.remoto, nuevo], lambda r: self.tras_tarea(tj, r))
 
     def quitar(self, tj):
-        if not confirmar(self, f"¿Desconectar «{tj.nombre}»?\n\nTranquilo: tus archivos en la nube "
-                               "NO se borran. Solo deja de aparecer la carpeta en este ordenador.",
+        if not confirmar(self, _("¿Desconectar «{nombre}»?\n\nTranquilo: tus archivos en la nube "
+                                 "NO se borran. Solo deja de aparecer la carpeta en este ordenador.")
+                         .format(nombre=tj.nombre),
                          si="Desconectar", no="Cancelar"):
             return
         tj.ocupado("Desconectando…")
@@ -2271,11 +2460,13 @@ class Ventana(QWidget):
 
 
 def main():
+    cargar_idioma()
+    elegir_carpeta_base()
     app = QApplication(sys.argv)
-    app.setApplicationName(APP)
+    app.setApplicationName(_(APP))
     app.setDesktopFileName("mis-nubes")
     traductor = QTranslator(app)
-    if traductor.load(QLocale("es"), "qtbase", "_",
+    if traductor.load(QLocale(IDIOMA), "qtbase", "_",
                       QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)):
         app.installTranslator(traductor)
     aplicar_tema(app)
@@ -2289,16 +2480,338 @@ def main():
     aviso = None
     copiadas = migrar_fotos_copia()
     if copiadas:
-        aviso = ("Novedad: iCloud Fotos ahora funciona en línea, sin copiar las fotos a tu "
-                 "ordenador. Para usarlo, pulsa «Añadir nube» y elige «iCloud Fotos».\n\n"
-                 "Las fotos que ya se habían copiado siguen en la carpeta «Nube › "
-                 + "», «".join(copiadas) + "». Si no las necesitas, puedes borrar esa carpeta "
-                 "para liberar espacio.")
+        aviso = _("Novedad: iCloud Fotos ahora funciona en línea, sin copiar las fotos a tu "
+                  "ordenador. Para usarlo, pulsa «Añadir nube» y elige «iCloud Fotos».\n\n"
+                  "Las fotos que ya se habían copiado siguen en la carpeta «{carpetas}». "
+                  "Si no las necesitas, puedes borrar esa carpeta para liberar espacio.").format(
+            carpetas="», «".join(f"{BASE.name} › {c}" for c in copiadas))
     app.setWindowIcon(icono_app())
     v = Ventana(aviso)
     v.show()
     return app.exec()
 
 
+# ================================================================ catálogos de idiomas
+# Inglés (incluido en el programa). Otros idiomas: archivos idiomas/<código>.json
+TRADUCCIONES["en"] = {
+    "_idioma": "English",
+    "Mis nubes": "My Clouds",
+    "Creado por Jose Callejas (Callejasto) y Claude (Anthropic)": "Created by Jose Callejas (Callejasto) and Claude (Anthropic)",
+    "Nube": "Clouds",
+    "Tu navegador de internet (Firefox, Chrome…). Allí iniciarás sesión de forma segura: <b>tu contraseña nunca se escribe en esta aplicación</b>.": "Your web browser (Firefox, Chrome…). You will sign in there securely: <b>your password is never typed into this app</b>.",
+    "Acceso completo (recomendado)": "Full access (recommended)",
+    "Solo lectura (ver y descargar)": "Read only (view and download)",
+    "Solo archivos creados desde este ordenador": "Only files created from this computer",
+    "Carpeta de datos de aplicaciones": "Application data folder",
+    "Solo ver nombres de archivos": "Only see file names",
+    "Mundial (recomendado)": "Worldwide (recommended)",
+    "Gobierno de Estados Unidos": "US Government",
+    "Alemania (antiguo)": "Germany (legacy)",
+    "Estados Unidos / Global": "United States / Global",
+    "Europa": "Europe",
+    "Japón": "Japan",
+    "SharePoint Online (cuenta de Microsoft)": "SharePoint Online (Microsoft account)",
+    "SharePoint en un servidor propio": "SharePoint on your own server",
+    "Servidor WebDAV de rclone": "rclone WebDAV server",
+    "Otro": "Other",
+    "Cuenta personal": "Personal account",
+    "Cuenta de servicio de empresa": "Business service account",
+    "Otro compatible con Koofr": "Other Koofr-compatible service",
+    "Activado": "On",
+    "Desactivado": "Off",
+    "OneDrive personal o de empresa (recomendado)": "OneDrive personal or business (recommended)",
+    "Sitio principal de SharePoint": "Main SharePoint site",
+    "Sitio de SharePoint por nombre o dirección": "SharePoint site by name or address",
+    "Buscar un sitio de SharePoint": "Search for a SharePoint site",
+    "Escribir el ID de la unidad (avanzado)": "Type the drive ID (advanced)",
+    "Escribir el ID del sitio (avanzado)": "Type the site ID (advanced)",
+    "Ruta del servidor de SharePoint (avanzado)": "SharePoint server path (advanced)",
+    "(dejar vacío)": "(leave empty)",
+    "Sí": "Yes",
+    "No": "No",
+    "tu usuario o correo": "your username or email",
+    "tu contraseña": "your password",
+    "déjalo como está": "leave it as it is",
+    "tunombre@icloud.com": "yourname@icloud.com",
+    "192.168.1.10   o   servidor.com": "192.168.1.10   or   server.com",
+    "tu@correo.com": "you@email.com",
+    "https://mi-nube.com/remote.php/dav/files/USUARIO": "https://my-cloud.com/remote.php/dav/files/USERNAME",
+    "Servicio": "Service",
+    "Nombre": "Name",
+    "Conectar": "Connect",
+    "Listo": "Done",
+    "Google Fotos": "Google Photos",
+    "iCloud Fotos": "iCloud Photos",
+    "Nextcloud / WebDAV": "Nextcloud / WebDAV",
+    "Carpeta compartida de red (SMB / Windows)": "Shared network folder (SMB / Windows)",
+    "Servidor SFTP / SSH": "SFTP / SSH server",
+    "Servidor FTP": "FTP server",
+    "Amazon S3 y compatibles (R2, Wasabi, MinIO…)": "Amazon S3 and compatible (R2, Wasabi, MinIO…)",
+    "Acceso directo a otra nube que ya tengas": "Shortcut to another cloud you already have",
+    "Sistema de archivos Hadoop (HDFS)": "Hadoop file system (HDFS)",
+    "Conjuntos de datos científicos (DOI)": "Scientific datasets (DOI)",
+    "Página web, solo lectura (HTTP)": "Web page, read only (HTTP)",
+    "Carpeta cifrada con contraseña (dentro de otra nube)": "Password-encrypted folder (inside another cloud)",
+    "Dividir archivos grandes en trozos": "Split large files into chunks",
+    "Juntar varias nubes en una": "Combine several clouds into one",
+    "Comprobación extra de archivos": "Extra file checking",
+    "Unir varias nubes en una sola carpeta": "Merge several clouds into a single folder",
+    "Comprimir otra nube": "Compress another cloud",
+    "Google Cloud Storage (no es Google Drive)": "Google Cloud Storage (not Google Drive)",
+    "Storj (nube descentralizada)": "Storj (decentralized cloud)",
+    "Sia (nube descentralizada)": "Sia (decentralized cloud)",
+    "Dirección del servidor (URL)": "Server address (URL)",
+    "Es la dirección completa de tu servidor. En Nextcloud la encuentras entrando desde el navegador › «Archivos» › abajo a la izquierda «Ajustes de archivos» › «WebDAV».\n\nSe parece a esto: https://tu-servidor.com/remote.php/dav/files/USUARIO\n\nSi no la sabes, pídesela a quien administra tu servidor.": "It is the full address of your server. In Nextcloud, open it in your browser › “Files” › bottom left “Files settings” › “WebDAV”.\n\nIt looks like this: https://your-server.com/remote.php/dav/files/USERNAME\n\nIf you don't know it, ask whoever runs your server.",
+    "Usuario": "Username",
+    "Tu nombre de usuario o correo.": "Your username or email.",
+    "Contraseña": "Password",
+    "Se guarda cifrada en este ordenador.": "It is stored encrypted on this computer.",
+    "Tu correo de Apple": "Your Apple email",
+    "Es el correo con el que entras en tu iPhone o en icloud.com. Lo ves en el iPhone: Ajustes › (tu nombre, arriba del todo).": "It is the email you use on your iPhone or at icloud.com. You can see it on your iPhone: Settings › (your name, at the very top).",
+    "Servidor": "Server",
+    "Nombre o dirección IP del servidor, por ejemplo 192.168.1.10": "Server name or IP address, for example 192.168.1.10",
+    "Puerto": "Port",
+    "Déjalo como está si no sabes cuál es.": "Leave it as it is if you don't know.",
+    "Tipo de servidor": "Server type",
+    "Elige tu servidor (Nextcloud, ownCloud…) o déjalo vacío.": "Choose your server (Nextcloud, ownCloud…) or leave it empty.",
+    "Proveedor": "Provider",
+    "Elige tu proveedor de almacenamiento.": "Choose your storage provider.",
+    "Clave de acceso (Access Key ID)": "Access Key ID",
+    "Te la da tu proveedor.": "Your provider gives it to you.",
+    "Clave secreta (Secret Access Key)": "Secret Access Key",
+    "Región": "Region",
+    "Dirección del servicio (endpoint)": "Service address (endpoint)",
+    "Te la da tu proveedor. Déjalo vacío si no la sabes.": "Your provider gives it to you. Leave it empty if you don't know it.",
+    "¿Usar credenciales del sistema?": "Use system credentials?",
+    "Normalmente: No.": "Usually: No.",
+    "Permisos": "Permissions",
+    "Déjalo vacío para tener acceso completo.": "Leave it empty for full access.",
+    "Dominio": "Domain",
+    "Normalmente WORKGROUP. Déjalo como está si no lo sabes.": "Usually WORKGROUP. Leave it as it is if you don't know.",
+    "Archivo de clave privada": "Private key file",
+    "Déjalo vacío si entras con contraseña.": "Leave it empty if you sign in with a password.",
+    "Escribe el código de 6 números": "Type the 6-digit code",
+    "Mira tu iPhone, iPad o Mac: aparecerá un aviso de «Solicitud de inicio de sesión». Pulsa «Permitir» y después escribe aquí los 6 números que te muestra.\n\n¿No te llegó nada? Espera un minuto. Si sigue sin llegar, escribe la palabra sms y pulsa «Siguiente»: te llegará el código por mensaje de texto.": "Look at your iPhone, iPad or Mac: a “Sign-in request” notice will appear. Tap “Allow” and then type here the 6 digits it shows you.\n\nNothing arrived? Wait a minute. If it still doesn't arrive, type the word sms and press “Next”: you will get the code by text message.",
+    "Código de verificación": "Verification code",
+    "Abre la app donde recibes tus códigos (o mira tu SMS) y escribe aquí los números.": "Open the app where you get your codes (or check your SMS) and type the digits here.",
+    "Tipo de cuenta": "Account type",
+    "Elige qué almacenamiento quieres usar.": "Choose which storage you want to use.",
+    "Unidad": "Drive",
+    "Elige la unidad que quieres usar.": "Choose the drive you want to use.",
+    "¿Es correcta esta unidad?": "Is this the right drive?",
+    "Elige «Sí» para usarla.": "Choose “Yes” to use it.",
+    "¿Usar una unidad compartida?": "Use a shared drive?",
+    "Elige «No» para usar tu Google Drive normal.": "Choose “No” to use your regular Google Drive.",
+    "Unidad compartida": "Shared drive",
+    "Elige la unidad compartida que quieres usar.": "Choose the shared drive you want to use.",
+    "ID de la cuenta (Account ID / keyID)": "Account ID / keyID",
+    "Lo encuentras en la web de Backblaze, en «App Keys».": "You can find it on the Backblaze website, under “App Keys”.",
+    "Clave de aplicación (Application Key)": "Application Key",
+    "¿Borrar definitivamente?": "Delete permanently?",
+    "Elige «No» para que lo que borres vaya primero a una papelera (más seguro).": "Choose “No” so deleted files go to a trash first (safer).",
+    "¿Solo ver las fotos?": "Only view the photos?",
+    "Elige «Sí» si solo quieres ver y descargar tus fotos, sin poder subir ni borrar.": "Choose “Yes” if you only want to view and download your photos, without uploading or deleting.",
+    "Elige «Cuenta personal» si no sabes cuál es.": "Choose “Personal account” if you don't know.",
+    "¿Conexión segura desde el inicio (FTPS implícito)?": "Secure connection from the start (implicit FTPS)?",
+    "Normalmente: No. Pregúntale al dueño del servidor si no lo sabes.": "Usually: No. Ask the server owner if you don't know.",
+    "¿Conexión segura (FTPS explícito)?": "Secure connection (explicit FTPS)?",
+    "Elige «Sí» si tu servidor lo permite; es más seguro. Si no lo sabes, elige «No».": "Choose “Yes” if your server supports it; it is safer. If you don't know, choose “No”.",
+    "¿Subidas rápidas?": "Fast uploads?",
+    "Recomendado: activado.": "Recommended: on.",
+    "Biblioteca": "Library",
+    "Nombre de la biblioteca de Seafile. Déjalo vacío para ver todas.": "Seafile library name. Leave it empty to see all of them.",
+    "Contraseña de la biblioteca": "Library password",
+    "Solo si esa biblioteca está cifrada. Si no, déjalo vacío.": "Only if that library is encrypted. Otherwise, leave it empty.",
+    "Contraseña del buzón": "Mailbox password",
+    "Solo si en Proton usas dos contraseñas. Si no, déjalo vacío.": "Only if you use two passwords in Proton. Otherwise, leave it empty.",
+    "¿Tu cuenta usa verificación en dos pasos?": "Does your account use two-step verification?",
+    "Elige «Sí» si al entrar te piden un código además de la contraseña.": "Choose “Yes” if you are asked for a code as well as your password when you sign in.",
+    "Tu contraseña de Apple": "Your Apple password",
+    "La misma que usas en tu iPhone para la App Store o iCloud. Se guarda cifrada en este ordenador.": "The same one you use on your iPhone for the App Store or iCloud. It is stored encrypted on this computer.",
+    "¿Activar la opción «{opcion}»?": "Turn on the “{opcion}” option?",
+    "Dato solicitado: «{opcion}»": "Requested setting: “{opcion}”",
+    "Si no sabes qué poner, <b>deja lo que viene escrito y pulsa «Siguiente»</b>. Casi siempre es lo correcto.": "If you don't know what to enter, <b>leave what is already there and press “Next”</b>. It is almost always right.",
+    "<br><br><span style='color:%s'>Este dato es opcional.</span>": "<br><br><span style='color:%s'>This setting is optional.</span>",
+    "Una ventana de inicio de sesión de un intento anterior seguía abierta. Cierra las pestañas de inicio de sesión del navegador y vuelve a intentarlo.": "A sign-in window from a previous attempt was still open. Close the sign-in tabs in your browser and try again.",
+    "Apple necesita tu permiso. Mira tu iPhone y acepta el aviso que aparece. Comprueba también que en Ajustes › (tu nombre) › iCloud está ACTIVADO «Acceder a los datos de iCloud en la web».": "Apple needs your permission. Look at your iPhone and accept the notice that appears. Also check that in Settings › (your name) › iCloud, “Access iCloud Data on the Web” is ON.",
+    "Apple pide que vuelvas a iniciar sesión (lo hace cada 30 días). Pulsa ⋯ y elige «Volver a iniciar sesión».": "Apple asks you to sign in again (it does so every 30 days). Press ⋯ and choose “Sign in again”.",
+    "El código de verificación no es correcto o ha caducado. Inténtalo de nuevo con un código nuevo.": "The verification code is wrong or has expired. Try again with a new code.",
+    "No se dio permiso en el navegador. Vuelve a intentarlo y pulsa «Permitir» o «Aceptar».": "Permission was not given in the browser. Try again and press “Allow” or “Accept”.",
+    "El permiso ha caducado. Desconecta esta nube y vuelve a añadirla.": "The permission has expired. Disconnect this cloud and add it again.",
+    "El usuario o la contraseña no son correctos. Revísalos e inténtalo de nuevo.": "The username or password is wrong. Check them and try again.",
+    "El servicio no ha dado permiso para entrar. Revisa que tu cuenta tenga acceso.": "The service did not allow access. Check that your account has access.",
+    "El certificado de seguridad del servidor no es válido. Avisa al dueño del servidor.": "The server's security certificate is not valid. Let the server owner know.",
+    "No se pudo llegar al servidor. Comprueba tu conexión a internet y que la dirección esté bien escrita.": "Could not reach the server. Check your internet connection and that the address is spelled correctly.",
+    "El servicio tardó demasiado en responder. Comprueba tu internet e inténtalo de nuevo.": "The service took too long to respond. Check your internet and try again.",
+    "No se encontró la carpeta o la dirección indicada. Revisa que esté bien escrita.": "The folder or address was not found. Check that it is spelled correctly.",
+    "Has cancelado la operación.": "You cancelled the operation.",
+    "El correo o la contraseña de Apple no son correctos. Revísalos e inténtalo de nuevo.": "The Apple email or password is wrong. Check them and try again.",
+    "No se pudo conectar. Comprueba tu conexión a internet e inténtalo de nuevo.": "Could not connect. Check your internet connection and try again.",
+    "Ha ocurrido un problema al conectar. Revisa los datos e inténtalo de nuevo.": "There was a problem connecting. Check your details and try again.",
+    "Error desconocido.": "Unknown error.",
+    "Error inesperado: {error}": "Unexpected error: {error}",
+    "Se agotó el tiempo de espera.": "The wait timed out.",
+    "Respuesta inesperada de rclone.": "Unexpected response from rclone.",
+    "El servicio tardó demasiado en responder.": "The service took too long to respond.",
+    "Carpeta lista.": "Folder ready.",
+    "No se pudo abrir la carpeta. Comprueba tu conexión a internet.": "Could not open the folder. Check your internet connection.",
+    "No se pudo abrir la carpeta. Comprueba tu internet. Si sigue sin funcionar, pulsa el botón ⋯ y elige «Volver a iniciar sesión»: Apple lo pide cada 30 días.": "Could not open the folder. Check your internet. If it still doesn't work, press the ⋯ button and choose “Sign in again”: Apple asks for it every 30 days.",
+    "Desconectado. Tus archivos en la nube no se han tocado.": "Disconnected. Your files in the cloud were not touched.",
+    "Nombre cambiado, pero no se pudo abrir la carpeta.": "Name changed, but the folder could not be opened.",
+    "Ahora se llama «{nombre}».": "It is now called “{nombre}”.",
+    "Tu correo y contraseña de Google (los mismos de Gmail).": "Your Google email and password (the same as for Gmail).",
+    "Tu correo y contraseña de Microsoft (Outlook, Hotmail, Office o el del trabajo).": "Your Microsoft email and password (Outlook, Hotmail, Office or your work account).",
+    "Tu correo y contraseña de Dropbox.": "Your Dropbox email and password.",
+    "Tu correo y contraseña de Apple (con los que entras en tu iPhone).": "Your Apple email and password (the ones you use on your iPhone).",
+    "Tu iPhone, iPad o Mac a mano: te llegará un código de 6 números.": "Your iPhone, iPad or Mac nearby: you will get a 6-digit code.",
+    "En el iPhone, abre <b>Ajustes › (tu nombre) › iCloud</b> y comprueba que «Acceder a los datos de iCloud en la web» está <b>activado</b>.": "On your iPhone, open <b>Settings › (your name) › iCloud</b> and check that “Access iCloud Data on the Web” is <b>on</b>.",
+    "Por seguridad, <b>Apple pide volver a iniciar sesión cada 30 días</b>. Cuando pase, verás un aviso en la tarjeta y lo harás en un minuto.": "For security, <b>Apple asks you to sign in again every 30 days</b>. When that happens, you will see a notice on the card and it takes a minute.",
+    "Por seguridad, <b>Apple pide volver a iniciar sesión cada 30 días</b>.": "For security, <b>Apple asks you to sign in again every 30 days</b>.",
+    "Tu correo y contraseña de MEGA.": "Your MEGA email and password.",
+    "Tu correo y contraseña de Proton.": "Your Proton email and password.",
+    "Si usas verificación en dos pasos, tu app de códigos a mano.": "If you use two-step verification, your code app nearby.",
+    "La <b>dirección de tu servidor</b>. En Nextcloud la encuentras así: entra en tu Nextcloud desde el navegador › «Archivos» › abajo a la izquierda «Ajustes de archivos» › copia la dirección que aparece en «WebDAV».": "Your <b>server address</b>. In Nextcloud you find it like this: open your Nextcloud in the browser › “Files” › bottom left “Files settings” › copy the address shown under “WebDAV”.",
+    "Tu usuario y contraseña. Si tu cuenta tiene verificación en dos pasos, crea una «contraseña de aplicación» en Ajustes › Seguridad y usa esa.": "Your username and password. If your account has two-step verification, create an “app password” in Settings › Security and use that.",
+    "El <b>nombre o la dirección IP</b> del ordenador que comparte la carpeta (por ejemplo 192.168.1.10). En Windows lo ves en Configuración › Sistema › Información.": "The <b>name or IP address</b> of the computer sharing the folder (for example 192.168.1.10). On Windows you can see it in Settings › System › About.",
+    "El usuario y la contraseña de ese ordenador.": "The username and password of that computer.",
+    "La dirección del servidor (nombre o IP).": "The server address (name or IP).",
+    "Tu usuario y contraseña del servidor.": "Your username and password for the server.",
+    "El nombre de tu proveedor (Amazon, Cloudflare R2, Wasabi…).": "The name of your provider (Amazon, Cloudflare R2, Wasabi…).",
+    "Tus claves «Access Key» y «Secret Key». Se crean en el panel web de tu proveedor.": "Your “Access Key” and “Secret Key”. They are created in your provider's web dashboard.",
+    "Tu «keyID» y tu «applicationKey». Están en la web de Backblaze › «App Keys» › «Add a New Application Key».": "Your “keyID” and “applicationKey”. They are on the Backblaze website › “App Keys” › “Add a New Application Key”.",
+    "Si te pide algún dato que no conoces, deja lo que venga escrito: casi siempre es lo correcto.": "If it asks for something you don't know, leave what is already there: it is almost always right.",
+    "Tu usuario y contraseña de {servicio}.": "Your {servicio} username and password.",
+    "Tu correo y contraseña de {servicio}.": "Your {servicio} email and password.",
+    "Esta información sirve para quien te ayude a resolver el problema:": "This information is for whoever helps you solve the problem:",
+    "Guardar": "Save",
+    "Cancelar": "Cancel",
+    "Entendido": "OK",
+    "Ver detalles técnicos": "Show technical details",
+    "Detalles técnicos": "Technical details",
+    "Añadir nube": "Add cloud",
+    "Modo experto": "Expert mode",
+    "Muestra también las preguntas técnicas. No hace falta para casi nadie.": "Also shows the technical questions. Almost nobody needs this.",
+    "Abrir la carpeta": "Open folder",
+    "Continuar": "Continue",
+    "Empezar": "Start",
+    "Siguiente": "Next",
+    "¿Qué nube quieres añadir?": "Which cloud do you want to add?",
+    "Haz clic en una. Si no la ves, escríbela en el buscador.": "Click one. If you don't see it, type it in the search box.",
+    "Buscar un servicio…  (por ejemplo: dropbox, nextcloud, mega)": "Search for a service…  (for example: dropbox, nextcloud, mega)",
+    "Ver todos los servicios": "See all services",
+    "Ver los {n} servicios disponibles": "See all {n} available services",
+    "Ver solo los más usados": "See only the most popular",
+    "<b>Ponle un nombre</b>": "<b>Give it a name</b>",
+    "Por ejemplo: Drive del trabajo, Fotos de casa…": "For example: Work Drive, Home Photos…",
+    "<b>Antes de empezar, ten a mano:</b>": "<b>Before you start, have ready:</b>",
+    "Se creará la carpeta:  Carpeta personal › {base} › <b>{nombre}</b>": "This folder will be created:  Home › {base} › <b>{nombre}</b>",
+    "Tus fotos aparecerán como una carpeta, ordenadas por álbumes. <b>Se ven en línea: no se copian a tu ordenador</b> (solo se guardan un rato las que abres, para que vayan rápido).<br>Es de <b>solo lectura</b>: puedes ver y copiar fotos, pero no borrar ni subir desde aquí. Para eso, usa tu iPhone.": "Your photos will appear as a folder, organized by albums. <b>They are viewed online: they are not copied to your computer</b> (only the ones you open are kept for a while, so they load fast).<br>It is <b>read only</b>: you can view and copy photos, but not delete or upload from here. Use your iPhone for that.",
+    "Tus archivos aparecerán como una carpeta normal de tu ordenador.": "Your files will appear as a regular folder on your computer.",
+    "Mostrar lo que escribo": "Show what I type",
+    "Ver la explicación técnica del servicio (en inglés)": "See the service's technical explanation",
+    "Sigue estos pasos. Esta ventana continuará sola cuando termines.": "Follow these steps. This window will continue on its own when you finish.",
+    "<b>¿No se abrió ninguna página en tu navegador?</b>  Pulsa este botón:": "<b>No page opened in your browser?</b>  Press this button:",
+    "Preparando el enlace…": "Preparing the link…",
+    "Copiar enlace": "Copy link",
+    "Esperando a que termines en el navegador…": "Waiting for you to finish in the browser…",
+    "Inicia sesión en {servicio}": "Sign in to {servicio}",
+    "Mira tu navegador (Firefox, Chrome…): se ha abierto una página de <b>{servicio}</b>. Si no la ves, búscala en la barra de tareas, abajo.": "Look at your browser (Firefox, Chrome…): a <b>{servicio}</b> page has opened. If you don't see it, look for it in the taskbar at the bottom.",
+    "Elige tu cuenta, o escribe tu correo y tu contraseña.": "Choose your account, or type your email and password.",
+    "Te preguntará si das permiso a <b>«rclone»</b> (es el programa que conecta tu nube; es seguro). Pulsa <b>«Permitir»</b> o <b>«Aceptar»</b>.": "It will ask if you give permission to <b>“rclone”</b> (the program that connects your cloud; it is safe). Press <b>“Allow”</b> or <b>“Accept”</b>.",
+    "Cuando veas la palabra <b>«Success!»</b> (significa «¡Listo!»), cierra esa pestaña y vuelve a esta ventana.": "When you see the word <b>“Success!”</b>, close that tab and come back to this window.",
+    "Abrir la página de inicio de sesión": "Open the sign-in page",
+    "✓ Copiado. Ahora abre tu navegador, haz clic en la barra de direcciones (arriba), pega con Ctrl+V y pulsa Intro.": "✓ Copied. Now open your browser, click the address bar (at the top), paste with Ctrl+V and press Enter.",
+    "Preparando…": "Preparing…",
+    "Un momento.": "Just a moment.",
+    "Comprobando…": "Checking…",
+    "Comprobando la conexión…": "Checking the connection…",
+    "Estamos mirando que todo funcione. Un momento.": "We are checking that everything works. Just a moment.",
+    "Preparando iCloud Fotos…": "Preparing iCloud Photos…",
+    "Descargando una versión más nueva de rclone (unos 25 MB). Solo pasa una vez.": "Downloading a newer version of rclone (about 25 MB). This only happens once.",
+    "Abriendo la carpeta…": "Opening the folder…",
+    "Primero haz clic en el servicio que quieres añadir.": "First click the service you want to add.",
+    "Escribe un nombre para esta nube, por ejemplo «Mis fotos».": "Type a name for this cloud, for example “My photos”.",
+    "Ya tienes una nube con ese nombre. Escribe otro distinto.": "You already have a cloud with that name. Type a different one.",
+    "Este dato es obligatorio. Escríbelo para poder continuar.": "This setting is required. Type it to continue.",
+    "No se pudo preparar iCloud Fotos": "Could not prepare iCloud Photos",
+    "No se pudo descargar lo necesario. Comprueba tu internet e inténtalo de nuevo.": "Could not download what is needed. Check your internet and try again.",
+    "No se pudo conectar": "Could not connect",
+    "Intentar de nuevo": "Try again",
+    "Detalle técnico (para quien te ayude): {detalle}": "Technical detail (for whoever helps you): {detalle}",
+    "Los datos se guardaron, pero no pudimos comprobar que funcionen:\n\n{explicacion}\n\n¿Quieres guardarla de todas formas?": "Your details were saved, but we could not check that they work:\n\n{explicacion}\n\nDo you want to keep it anyway?",
+    "Guardar igualmente": "Keep anyway",
+    "No guardar": "Don't keep",
+    "No se añadió": "Not added",
+    "Puedes intentarlo de nuevo cuando quieras.": "You can try again whenever you want.",
+    "Casi listo": "Almost done",
+    "Tu cuenta quedó guardada, pero no se pudo abrir la carpeta. Cierra esta ventana y pulsa «Reintentar» en la tarjeta de esta nube.": "Your account was saved, but the folder could not be opened. Close this window and press “Retry” on this cloud's card.",
+    "¡Sesión iniciada!": "Signed in!",
+    "«{nombre}» vuelve a funcionar. Dentro de 30 días Apple te lo volverá a pedir.": "“{nombre}” works again. Apple will ask again in 30 days.",
+    "¡iCloud Fotos está listo!": "iCloud Photos is ready!",
+    "Tus fotos están en la carpeta <b>{base} › {carpeta}</b>, ordenadas por álbumes (todas juntas están en «All Photos»).<br><br>La primera vez puede tardar unos minutos en mostrar todas las fotos si tienes muchas. Las siguientes veces irá rápido.": "Your photos are in the <b>{base} › {carpeta}</b> folder, organized by albums (all of them together are in “All Photos”).<br><br>The first time it may take a few minutes to show all your photos if you have many. After that it will be fast.",
+    "¡«{nombre}» está lista!": "“{nombre}” is ready!",
+    "Tus archivos ya aparecen en la carpeta <b>{base} › {carpeta}</b>.<br>Se abrirá sola cada vez que enciendas el ordenador.<br><br>Consejo: también la tienes en el panel izquierdo del explorador de archivos, en «Mis nubes».": "Your files now appear in the <b>{base} › {carpeta}</b> folder.<br>It will open on its own every time you turn on your computer.<br><br>Tip: you also have it in the left panel of the file manager, under “My Clouds”.",
+    "Volver a iniciar sesión": "Sign in again",
+    "Acerca de Mis nubes": "About My Clouds",
+    "Versión {v}": "Version {v}",
+    "Tus nubes como carpetas normales en Linux: Google Drive, OneDrive, iCloud, Dropbox, MEGA y muchas más.": "Your clouds as regular folders on Linux: Google Drive, OneDrive, iCloud, Dropbox, MEGA and many more.",
+    "Funciona gracias a <b>rclone</b> (rclone.org), un programa libre. Iconos de los servicios: tema libre <b>Papirus</b>.": "Powered by <b>rclone</b> (rclone.org), a free program. Service icons: the free <b>Papirus</b> theme.",
+    "Idioma:": "Language:",
+    "Automático (el del sistema)": "Automatic (system language)",
+    "Cerrar": "Close",
+    "El idioma cambiará al volver a abrir Mis nubes. ¿Reiniciar ahora?": "The language will change when My Clouds is reopened. Restart now?",
+    "Reiniciar ahora": "Restart now",
+    "Más tarde": "Later",
+    "Más opciones": "More options",
+    "Volver a iniciar sesión…": "Sign in again…",
+    "Cambiar nombre…": "Rename…",
+    "Desconectar…": "Disconnect…",
+    "Conectada": "Connected",
+    "Sin conexión": "Offline",
+    "No aparece como carpeta": "Not shown as a folder",
+    "Abrir": "Open",
+    "Reintentar": "Retry",
+    "Mostrar carpeta": "Show folder",
+    "solo lectura": "read only",
+    "{usado} usados de {total}": "{usado} used of {total}",
+    "{usado} usados": "{usado} used",
+    "Tus archivos ocupan {usado} en iCloud Drive": "Your files take up {usado} in iCloud Drive",
+    "Apple no permite consultar el total de tu plan desde aquí. Las fotos no se cuentan: ocupan aparte.": "Apple doesn't allow checking your plan's total from here. Photos are not counted: they take up space separately.",
+    "Tus nubes, como carpetas normales de tu ordenador.": "Your clouds, as regular folders on your computer.",
+    "＋  Añadir nube": "＋  Add cloud",
+    "Todavía no tienes ninguna nube": "You don't have any clouds yet",
+    "Añade Google Drive, OneDrive, iCloud, Dropbox y muchas más.\nAparecerán como carpetas y se abrirán solas al encender el ordenador.": "Add Google Drive, OneDrive, iCloud, Dropbox and many more.\nThey will appear as folders and open on their own when you turn on your computer.",
+    "Añadir mi primera nube": "Add my first cloud",
+    "Abrir carpeta {base}": "Open {base} folder",
+    "Nube añadida.": "Cloud added.",
+    "Conectando…": "Connecting…",
+    "Cambiar nombre": "Rename",
+    "Escribe el nuevo nombre (su carpeta también cambiará de nombre):": "Type the new name (its folder will be renamed too):",
+    "Cambiando el nombre…": "Renaming…",
+    "Desconectar": "Disconnect",
+    "Desconectando…": "Disconnecting…",
+    "¿Desconectar «{nombre}»?\n\nTranquilo: tus archivos en la nube NO se borran. Solo deja de aparecer la carpeta en este ordenador.": "Disconnect “{nombre}”?\n\nDon't worry: your files in the cloud are NOT deleted. The folder just stops appearing on this computer.",
+    "Todavía se está haciendo algo. ¿Cerrar de todas formas?": "Something is still in progress. Close anyway?",
+    "Faltan algunos programas necesarios. Cierra esta ventana y vuelve a abrir el archivo «Mis nubes» para instalarlos.": "Some required programs are missing. Close this window and open the “Mis nubes” file again to install them.",
+    "Novedad: iCloud Fotos ahora funciona en línea, sin copiar las fotos a tu ordenador. Para usarlo, pulsa «Añadir nube» y elige «iCloud Fotos».\n\nLas fotos que ya se habían copiado siguen en la carpeta «{carpetas}». Si no las necesitas, puedes borrar esa carpeta para liberar espacio.": "New: iCloud Photos now works online, without copying photos to your computer. To use it, press “Add cloud” and choose “iCloud Photos”.\n\nThe photos that were already copied are still in the “{carpetas}” folder. If you don't need them, you can delete that folder to free up space.",
+    "Tus nubes como carpetas normales": "Your clouds as regular folders"
+}
+
+
+def exportar_idioma(codigo):
+    """Imprime un catálogo para traducir: python3 mis_nubes.py --exportar-idioma fr > fr.json"""
+    base = TRADUCCIONES.get("en", {})
+    existente = catalogo(codigo) or {}
+    plantilla = {"_idioma": nombre_idioma(codigo),
+                 "_instrucciones": "Traduce cada valor. Las claves (a la izquierda) están en "
+                                   "español y no se tocan. Respeta {variables} y etiquetas <b>.",
+                 **{k: existente.get(k, "" if codigo != "en" else v)
+                    for k, v in base.items() if not k.startswith("_")}}
+    print(json.dumps(plantilla, ensure_ascii=False, indent=2))
+
+
 if __name__ == "__main__":
+    if len(sys.argv) >= 3 and sys.argv[1] == "--exportar-idioma":
+        exportar_idioma(sys.argv[2])
+        sys.exit(0)
     sys.exit(main())

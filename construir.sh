@@ -9,7 +9,9 @@ cat > "dist/Mis nubes.desktop" <<DESKTOP
 Type=Application
 Name=Mis nubes
 GenericName=Nubes como carpetas
-Comment=Google Drive, OneDrive, iCloud, iCloud Fotos, Dropbox, MEGA y más como carpetas. Por Jose Callejas y Claude.
+Comment=Google Drive, OneDrive, iCloud, iCloud Fotos, Dropbox, MEGA y más como carpetas. Por Jose Callejas (Callejasto) y Claude.
+Name[en]=My Clouds
+Comment[en]=Google Drive, OneDrive, iCloud, iCloud Photos, Dropbox, MEGA and more as folders. By Jose Callejas (Callejasto) and Claude.
 Icon=folder-cloud
 Terminal=false
 Categories=Utility;Network;

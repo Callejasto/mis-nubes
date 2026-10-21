@@ -604,7 +604,11 @@ def preparar_sistema():
         APP_DIR.mkdir(parents=True, exist_ok=True)
         destino = APP_DIR / "mis_nubes.py"
         origen = Path(__file__).resolve()
-        if origen != destino:
+        try:
+            instalada = version_de_codigo(destino.read_text())
+        except OSError:
+            instalada = (0,)
+        if origen != destino and instalada <= version_tupla(VERSION):
             shutil.copyfile(origen, destino)
         menu = HOME / ".local/share/applications/mis-nubes.desktop"
         menu.parent.mkdir(parents=True, exist_ok=True)
@@ -612,10 +616,118 @@ def preparar_sistema():
             "[Desktop Entry]\nType=Application\nName=Mis nubes\n"
             f"Name[en]={TRADUCCIONES.get('en', {}).get('Mis nubes', 'Mis nubes')}\n"
             f"Comment={_('Tus nubes como carpetas normales')}\n"
-            f"Exec=python3 {destino}\nIcon=folder-cloud\nTerminal=false\n"
+            f"Exec=bash -c \"{DEPENDENCIAS}; exec python3 '{destino}'\"\n"
+            "Icon=mis-nubes\nTerminal=false\n"
             "Categories=Utility;Network;\n")
     except OSError:
         pass
+
+
+# ---------------------------------------------- actualizaciones
+REPO = "Callejasto/mis-nubes"
+URL_ULTIMA = os.environ.get("MIS_NUBES_ACTUALIZACIONES",
+                            f"https://api.github.com/repos/{REPO}/releases/latest")
+PROGRAMA_INSTALADO = APP_DIR / "mis_nubes.py"
+# Comprueba (y si falta, instala) lo necesario antes de abrir el programa
+DEPENDENCIAS = ("{ python3 -c 'import PyQt6.QtWidgets' 2>/dev/null && command -v rclone && "
+                "command -v fusermount3 && pacman -Q qt6-translations qt6-svg papirus-icon-theme || "
+                "{ notify-send -i folder-cloud 'Mis nubes' 'Instalando lo necesario...'; "
+                "pkexec pacman -S --needed --noconfirm python python-pyqt6 rclone fuse3 "
+                "qt6-translations qt6-svg papirus-icon-theme; }; } >/dev/null 2>&1")
+
+
+def version_tupla(texto):
+    """«v1.2» o «1.2.3» → (1, 2) / (1, 2, 3). Si no se entiende: (0,)."""
+    numeros = re.findall(r"\d+", texto or "")
+    return tuple(int(n) for n in numeros) or (0,)
+
+
+def version_de_codigo(codigo):
+    m = re.search(r'^VERSION = "([^"]+)"', codigo or "", re.M)
+    return version_tupla(m.group(1)) if m else (0,)
+
+
+def abrir_version_mas_nueva():
+    """Si se abrió un lanzador viejo pero ya hay instalada una versión más nueva, abre esa."""
+    try:
+        if Path(__file__).resolve() == PROGRAMA_INSTALADO.resolve():
+            return
+        instalada = version_de_codigo(PROGRAMA_INSTALADO.read_text())
+    except OSError:
+        return
+    if instalada > version_tupla(VERSION):
+        os.execv(sys.executable, [sys.executable, str(PROGRAMA_INSTALADO), *sys.argv[1:]])
+
+
+def tarea_buscar_actualizacion():
+    """Consulta la última versión publicada en GitHub. Devuelve sus datos, o None si no hay nada nuevo."""
+    import urllib.request
+    try:
+        pedido = urllib.request.Request(URL_ULTIMA, headers={
+            "Accept": "application/vnd.github+json", "User-Agent": f"mis-nubes/{VERSION}"})
+        with urllib.request.urlopen(pedido, timeout=15) as r:
+            d = json.loads(r.read().decode("utf-8"))
+    except Exception:  # noqa: BLE001  (sin internet, GitHub caído…: no es un problema)
+        return "error"
+    archivo = next((a for a in d.get("assets", []) if a.get("name", "").endswith(".desktop")), None)
+    if not archivo or version_tupla(d.get("tag_name")) <= version_tupla(VERSION):
+        return None
+    return {"version": d["tag_name"].lstrip("vV"), "url": archivo["browser_download_url"],
+            "huella": archivo.get("digest") or "", "pagina": d.get("html_url", "")}
+
+
+def tarea_actualizar(info, aviso_progreso):
+    """Descarga la versión nueva, la verifica y la instala. Las nubes no se tocan."""
+    import base64
+    import gzip
+    import urllib.request
+    try:
+        pedido = urllib.request.Request(info["url"], headers={"User-Agent": f"mis-nubes/{VERSION}"})
+        datos = bytearray()
+        with urllib.request.urlopen(pedido, timeout=60) as r:
+            total = int(r.headers.get("Content-Length") or 0)
+            while True:
+                bloque = r.read(64 * 1024)
+                if not bloque:
+                    break
+                datos += bloque
+                if total:
+                    aviso_progreso(int(len(datos) * 100 / total))
+        datos = bytes(datos)
+    except Exception as e:  # noqa: BLE001
+        return (False, _("No se pudo descargar la actualización. Comprueba tu internet."), str(e))
+    # 1. Huella digital: lo descargado es exactamente lo publicado
+    huella = info.get("huella", "")
+    if huella.startswith("sha256:") and hashlib.sha256(datos).hexdigest() != huella[7:]:
+        return (False, _("La descarga llegó dañada o no es auténtica. No se instaló nada."),
+                "sha256 no coincide")
+    # 2. Sacar el programa del lanzador y comprobar que es válido y de la versión esperada
+    try:
+        lanzador = datos.decode("utf-8")
+        m = re.search(r'^Exec=bash -c "echo ([A-Za-z0-9+/=]+) \| base64', lanzador, re.M)
+        codigo = gzip.decompress(base64.b64decode(m.group(1))).decode("utf-8")
+        compile(codigo, "mis_nubes.py", "exec")
+        if version_de_codigo(codigo) != version_tupla(info["version"]):
+            raise ValueError("versión distinta de la anunciada")
+    except Exception as e:  # noqa: BLE001
+        return (False, _("La actualización descargada no es válida. No se instaló nada."), str(e))
+    # 3. Instalar (cambio atómico: o queda la versión vieja entera, o la nueva entera)
+    try:
+        APP_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = PROGRAMA_INSTALADO.with_suffix(".nuevo")
+        tmp.write_text(codigo)
+        os.replace(tmp, PROGRAMA_INSTALADO)
+    except OSError as e:
+        return (False, _("No se pudo instalar la actualización."), str(e))
+    # 4. Actualizar también los lanzadores descargados (para que no abran una versión vieja)
+    for carpeta in ("Descargas", "Downloads", "Escritorio", "Desktop"):
+        try:
+            for f in (HOME / carpeta).glob("*.desktop"):
+                if "Name=Mis nubes" in f.read_text(errors="ignore"):
+                    f.write_text(lanzador.replace("Icon=folder-cloud", f"Icon={ICONO_RUTA}"))
+        except OSError:
+            pass
+    return (True, info["version"], "")
 
 
 # ---------------------------------------------- pasos del asistente de rclone
@@ -633,6 +745,7 @@ def liberar_puerto():
 class Eventos(QObject):
     enlace = pyqtSignal(str)
     progreso = pyqtSignal(int)
+    progreso_actualizacion = pyqtSignal(int)
 
 
 EVENTOS = Eventos()
@@ -785,7 +898,7 @@ def titulo_grande(texto, extra=6):
 
 
 # ================================================================ versión y créditos
-VERSION = "1.1"
+VERSION = "1.2"
 CREDITOS = "Creado por Jose Callejas (Callejasto) y Claude (Anthropic)"
 
 # ================================================================ icono propio
@@ -1036,6 +1149,62 @@ ICONOS_PROPIOS = {
 </svg>
 """,
 }
+ICONOS_PROPIOS["s3"] = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="fondo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFC15E"/>
+      <stop offset="1" stop-color="#F0711C"/>
+    </linearGradient>
+    <linearGradient id="cubo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#FFEBD9"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#fondo)"/>
+  <g transform="translate(256,272) scale(1.2) translate(-256,-272)">
+  <path fill="#8A3A00" opacity="0.2" d="M152 188 L360 188 L330 392 Q256 418 182 392 Z" transform="translate(0,12)"/>
+  <path fill="url(#cubo)" d="M146 176 L366 176 L334 384 Q256 412 178 384 Z"/>
+  <ellipse cx="256" cy="176" rx="110" ry="34" fill="#FFFFFF"/>
+  <ellipse cx="256" cy="176" rx="90" ry="20" fill="#F58A2A"/>
+  <path d="M161 252 Q256 282 351 252" fill="none" stroke="#F58A2A" stroke-width="14" stroke-linecap="round"/>
+  <path d="M172 320 Q256 348 340 320" fill="none" stroke="#F58A2A" stroke-width="14" stroke-linecap="round"/>
+  </g>
+</svg>
+"""
+ICONOS_PROPIOS["b2"] = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="fondo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FF7A7A"/>
+      <stop offset="1" stop-color="#D2203A"/>
+    </linearGradient>
+    <linearGradient id="disco" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#FFE3E6"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#fondo)"/>
+  <g fill="#7A0F1E" opacity="0.2" transform="translate(0,10)">
+    <rect x="128" y="138" width="256" height="68" rx="18"/>
+    <rect x="128" y="222" width="256" height="68" rx="18"/>
+    <rect x="128" y="306" width="256" height="68" rx="18"/>
+  </g>
+  <g fill="url(#disco)">
+    <rect x="128" y="132" width="256" height="68" rx="18"/>
+    <rect x="128" y="216" width="256" height="68" rx="18"/>
+    <rect x="128" y="300" width="256" height="68" rx="18"/>
+  </g>
+  <g fill="#E0384F">
+    <circle cx="346" cy="166" r="11"/>
+    <circle cx="346" cy="250" r="11"/>
+    <circle cx="346" cy="334" r="11"/>
+  </g>
+  <g stroke="#F0A0AA" stroke-width="10" stroke-linecap="round">
+    <line x1="164" y1="166" x2="262" y2="166"/>
+    <line x1="164" y1="250" x2="262" y2="250"/>
+    <line x1="164" y1="334" x2="262" y2="334"/>
+  </g>
+</svg>
+"""
 ICONOS_CACHE = HOME / ".cache/mis-nubes/iconos"
 _ICONOS = {}
 
@@ -1137,6 +1306,7 @@ def aplicar_tema(app):
     QLabel {{ background: transparent; }}
     QFrame#tarjeta {{ background: {T['tarjeta']}; border: 1px solid {T['borde']}; border-radius: 14px; }}
     QFrame#caja {{ background: {T['tarjeta']}; border: 1px solid {T['borde']}; border-radius: 12px; }}
+    QFrame#actualizacion {{ background: {T['sel']}; border: 1px solid {T['acento']}; border-radius: 14px; }}
     QLabel#gris {{ color: {T['gris']}; }}
     QLabel#pequeno {{ color: {T['gris']}; font-size: 9pt; }}
     QLabel#titulo {{ font-size: 21pt; font-weight: 700; }}
@@ -2145,8 +2315,32 @@ class AcercaDe(QDialog):
         fila.addWidget(self.idioma)
         fila.addStretch()
         l.addLayout(fila)
+        # Actualizaciones
+        self.auto_act = QCheckBox(_("Buscar actualizaciones al abrir"))
+        self.auto_act.setChecked(leer_ajustes().get("buscar_actualizaciones", True))
+        self.auto_act.toggled.connect(lambda v: guardar_ajuste("buscar_actualizaciones", v))
+        l.addWidget(self.auto_act, 0, Qt.AlignmentFlag.AlignCenter)
+        self.buscar = boton("Buscar actualizaciones ahora", None, self._buscar)
+        l.addWidget(self.buscar, 0, Qt.AlignmentFlag.AlignCenter)
         l.addSpacing(6)
         l.addWidget(boton("Cerrar", "primario", self.accept), 0, Qt.AlignmentFlag.AlignCenter)
+
+    def _buscar(self):
+        ventana = self.parent()
+        self.buscar.setEnabled(False)
+        self.buscar.setText(_("Buscando…"))
+
+        def resultado(info):
+            self.buscar.setEnabled(True)
+            self.buscar.setText(_("Buscar actualizaciones ahora"))
+            if isinstance(info, dict):
+                self.accept()
+            elif info == "error":
+                avisar(self, _("No se pudo comprobar si hay versiones nuevas. Revisa tu conexión a "
+                               "internet e inténtalo más tarde."))
+            else:
+                avisar(self, _("Tienes la última versión ({v}).").format(v=VERSION))
+        ventana.buscar_actualizacion(resultado)
 
     def _cambiar_idioma(self):
         guardar_ajuste("idioma", self.idioma.currentData())
@@ -2300,6 +2494,39 @@ class Ventana(QWidget):
                       Qt.AlignmentFlag.AlignVCenter)
         lay.addLayout(cab)
 
+        # Aviso de versión nueva (oculto hasta que haya una)
+        self.act = QFrame()
+        self.act.setObjectName("actualizacion")
+        fa = QHBoxLayout(self.act)
+        fa.setContentsMargins(16, 12, 12, 12)
+        fa.setSpacing(12)
+        ico_act = QLabel()
+        ico_act.setPixmap(icono_app().pixmap(40, 40))
+        fa.addWidget(ico_act)
+        ca = QVBoxLayout()
+        ca.setSpacing(2)
+        self.act_titulo = etiqueta("", "nombre")
+        self.act_texto = etiqueta("", "gris")
+        self.act_barra = QProgressBar()
+        self.act_barra.setTextVisible(False)
+        self.act_barra.setRange(0, 100)
+        self.act_barra.hide()
+        ca.addWidget(self.act_titulo)
+        ca.addWidget(self.act_texto)
+        ca.addWidget(self.act_barra)
+        fa.addLayout(ca, 1)
+        self.act_novedades = boton("Novedades", "enlace", self._ver_novedades)
+        self.act_luego = boton("Ahora no", None, self.act.hide)
+        self.act_boton = boton("Actualizar", "primario", self._actualizar)
+        for b in (self.act_novedades, self.act_luego, self.act_boton):
+            fa.addWidget(b, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.act.hide()
+        lay.addWidget(self.act)
+        self.info_act = None
+        EVENTOS.progreso_actualizacion.connect(self.act_barra.setValue)
+        if leer_ajustes().get("buscar_actualizaciones", True):
+            QTimer.singleShot(1500, self.buscar_actualizacion)
+
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -2374,6 +2601,54 @@ class Ventana(QWidget):
                 self.espacio_pedido[r] = time.time()
                 self.lz.lanzar(tarea_espacio, [r, dump[r]], self._espacio)
         self.vacio.setVisible(not dump)
+
+    # ---------- actualizaciones
+    def buscar_actualizacion(self, al_terminar=None):
+        def listo(info):
+            if isinstance(info, dict):
+                self.mostrar_actualizacion(info)
+            if al_terminar:
+                al_terminar(info)
+        self.lz.lanzar(tarea_buscar_actualizacion, [], listo)
+
+    def mostrar_actualizacion(self, info):
+        self.info_act = info
+        self.act_titulo.setText(_("Hay una versión nueva: {v}").format(v=info["version"]))
+        self.act_texto.setText(_("Tienes la {actual}. Se actualiza en unos segundos y tus nubes "
+                                 "no se tocan.").format(actual=VERSION))
+        for b in (self.act_novedades, self.act_luego, self.act_boton):
+            b.setEnabled(True)
+        self.act_barra.hide()
+        self.act.show()
+
+    def _ver_novedades(self):
+        if self.info_act and self.info_act.get("pagina"):
+            QDesktopServices.openUrl(QUrl(self.info_act["pagina"]))
+
+    def _actualizar(self):
+        if not self.info_act:
+            return
+        for b in (self.act_novedades, self.act_luego, self.act_boton):
+            b.setEnabled(False)
+        self.act_texto.setText(_("Descargando y comprobando la versión nueva…"))
+        self.act_barra.setValue(0)
+        self.act_barra.show()
+        self.lz.lanzar(tarea_actualizar, [self.info_act, EVENTOS.progreso_actualizacion.emit],
+                       self._actualizado)
+
+    def _actualizado(self, res):
+        ok, dato, detalle = res if len(res) == 3 else (res[0], res[1], "")
+        if not ok:
+            avisar(self, dato, detalle or None)
+            self.mostrar_actualizacion(self.info_act)
+            return
+        self.act.hide()
+        if confirmar(self, _("Mis nubes se actualizó a la versión {v}.\n\n¿Reiniciar ahora para "
+                             "usarla? Tus nubes siguen funcionando mientras tanto.").format(v=dato),
+                     si="Reiniciar ahora", no="Más tarde"):
+            os.execv(sys.executable, [sys.executable, str(PROGRAMA_INSTALADO)])
+        self.mensaje(True, _("Actualizado. La versión nueva se usará la próxima vez que abras "
+                             "Mis nubes."))
 
     def _espacio(self, res):
         remoto, usado, total = res
@@ -2460,6 +2735,7 @@ class Ventana(QWidget):
 
 
 def main():
+    abrir_version_mas_nueva()
     cargar_idioma()
     elegir_carpeta_base()
     app = QApplication(sys.argv)
@@ -2794,7 +3070,24 @@ TRADUCCIONES["en"] = {
     "Todavía se está haciendo algo. ¿Cerrar de todas formas?": "Something is still in progress. Close anyway?",
     "Faltan algunos programas necesarios. Cierra esta ventana y vuelve a abrir el archivo «Mis nubes» para instalarlos.": "Some required programs are missing. Close this window and open the “Mis nubes” file again to install them.",
     "Novedad: iCloud Fotos ahora funciona en línea, sin copiar las fotos a tu ordenador. Para usarlo, pulsa «Añadir nube» y elige «iCloud Fotos».\n\nLas fotos que ya se habían copiado siguen en la carpeta «{carpetas}». Si no las necesitas, puedes borrar esa carpeta para liberar espacio.": "New: iCloud Photos now works online, without copying photos to your computer. To use it, press “Add cloud” and choose “iCloud Photos”.\n\nThe photos that were already copied are still in the “{carpetas}” folder. If you don't need them, you can delete that folder to free up space.",
-    "Tus nubes como carpetas normales": "Your clouds as regular folders"
+    "Tus nubes como carpetas normales": "Your clouds as regular folders",
+    "No se pudo descargar la actualización. Comprueba tu internet.": "Could not download the update. Check your internet.",
+    "La descarga llegó dañada o no es auténtica. No se instaló nada.": "The download arrived damaged or is not authentic. Nothing was installed.",
+    "La actualización descargada no es válida. No se instaló nada.": "The downloaded update is not valid. Nothing was installed.",
+    "No se pudo instalar la actualización.": "Could not install the update.",
+    "Novedades": "What's new",
+    "Ahora no": "Not now",
+    "Actualizar": "Update",
+    "Hay una versión nueva: {v}": "A new version is available: {v}",
+    "Tienes la {actual}. Se actualiza en unos segundos y tus nubes no se tocan.": "You have {actual}. It updates in a few seconds and your clouds are not touched.",
+    "Descargando y comprobando la versión nueva…": "Downloading and checking the new version…",
+    "Mis nubes se actualizó a la versión {v}.\n\n¿Reiniciar ahora para usarla? Tus nubes siguen funcionando mientras tanto.": "My Clouds was updated to version {v}.\n\nRestart now to use it? Your clouds keep working in the meantime.",
+    "Actualizado. La versión nueva se usará la próxima vez que abras Mis nubes.": "Updated. The new version will be used the next time you open My Clouds.",
+    "Buscar actualizaciones al abrir": "Check for updates on startup",
+    "Buscar actualizaciones ahora": "Check for updates now",
+    "Buscando…": "Checking…",
+    "No se pudo comprobar si hay versiones nuevas. Revisa tu conexión a internet e inténtalo más tarde.": "Could not check for new versions. Check your internet connection and try again later.",
+    "Tienes la última versión ({v}).": "You have the latest version ({v})."
 }
 
 

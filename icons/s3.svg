@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="fondo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFC15E"/>
+      <stop offset="1" stop-color="#F0711C"/>
+    </linearGradient>
+    <linearGradient id="cubo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#FFEBD9"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#fondo)"/>
+  <g transform="translate(256,272) scale(1.2) translate(-256,-272)">
+  <path fill="#8A3A00" opacity="0.2" d="M152 188 L360 188 L330 392 Q256 418 182 392 Z" transform="translate(0,12)"/>
+  <path fill="url(#cubo)" d="M146 176 L366 176 L334 384 Q256 412 178 384 Z"/>
+  <ellipse cx="256" cy="176" rx="110" ry="34" fill="#FFFFFF"/>
+  <ellipse cx="256" cy="176" rx="90" ry="20" fill="#F58A2A"/>
+  <path d="M161 252 Q256 282 351 252" fill="none" stroke="#F58A2A" stroke-width="14" stroke-linecap="round"/>
+  <path d="M172 320 Q256 348 340 320" fill="none" stroke="#F58A2A" stroke-width="14" stroke-linecap="round"/>
+  </g>
+</svg>

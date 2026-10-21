@@ -48,6 +48,7 @@ After the first time, **My Clouds** appears in your application menu with its ic
 - **Polished design** inspired by macOS, with light and dark mode.
 - **"My Clouds" shortcut** in the side panel of the file manager (Dolphin).
 - **In Spanish and English**, ready for more languages.
+- **Updates itself:** when a new version is out, a notice appears with an “Update” button. The download is verified before installing and your clouds are not touched.
 
 ## Languages
 
@@ -73,12 +74,13 @@ Apple doesn't allow uploading or deleting photos outside its own apps. Use your 
 - The whole program is in [`src/mis_nubes.py`](src/mis_nubes.py) (Python 3 + PyQt6). The code is written in Spanish; every visible text goes through `_()`.
 - [`construir.sh`](construir.sh) builds `dist/Mis nubes.desktop`: a single-file launcher that carries the program inside, compressed.
 - Each cloud is a systemd user service (`~/.config/systemd/user/mis-nubes-*.service`) running `rclone mount`.
+- **Publishing a version:** change `VERSION` in the code, run `./construir.sh` and create a release tagged `vX.Y` (the same version) with `dist/Mis nubes.desktop` attached. Installed copies detect it, check its SHA-256 digest and update themselves.
 
 ## Credits
 
 Created by **Jose Callejas** ([@Callejasto](https://github.com/Callejasto)) and **Claude** (Anthropic).
 
-Powered by [rclone](https://rclone.org) (MIT license). Service icons come from the free [Papirus](https://github.com/PapirusDevelopmentTeam/papirus-icon-theme) theme (GPL-3.0), installed from your system repositories; brands and logos belong to their respective owners. The Proton Drive and Koofr icons in the [`icons`](icons) folder are original designs made for this project, not their official logos. This project is not affiliated with Google, Microsoft, Apple or any other service.
+Powered by [rclone](https://rclone.org) (MIT license). Service icons come from the free [Papirus](https://github.com/PapirusDevelopmentTeam/papirus-icon-theme) theme (GPL-3.0), installed from your system repositories; brands and logos belong to their respective owners. The Proton Drive, Koofr, Amazon S3 and Backblaze B2 icons in the [`icons`](icons) folder are original designs made for this project, not their official logos. This project is not affiliated with Google, Microsoft, Apple or any other service.
 
 ## License
 

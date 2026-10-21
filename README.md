@@ -49,6 +49,7 @@ Después de la primera vez, **Mis nubes** aparece en el menú de aplicaciones co
 - **Diseño cuidado** inspirado en macOS, con modo claro y oscuro.
 - Atajo **«Mis nubes»** en el panel lateral del explorador de archivos (Dolphin).
 - **En español e inglés**, y preparado para más idiomas (ver abajo).
+- **Se actualiza sola:** cuando hay una versión nueva, aparece un aviso con un botón «Actualizar». La descarga se verifica antes de instalarse y tus nubes no se tocan.
 
 ## Idiomas
 
@@ -75,6 +76,7 @@ Apple no permite subir ni borrar fotos desde fuera de sus aplicaciones. Para eso
 - El programa completo está en [`src/mis_nubes.py`](src/mis_nubes.py) (Python 3 + PyQt6).
 - [`construir.sh`](construir.sh) genera `dist/Mis nubes.desktop`: un lanzador de un solo archivo que lleva el programa dentro, comprimido.
 - Cada nube es un servicio de usuario de systemd (`~/.config/systemd/user/mis-nubes-*.service`) que ejecuta `rclone mount`.
+- **Publicar una versión:** cambia `VERSION` en el código, ejecuta `./construir.sh` y crea una *release* con la etiqueta `vX.Y` (la misma versión) adjuntando `dist/Mis nubes.desktop`. Las copias instaladas la detectan, comprueban su huella SHA-256 y se actualizan.
 
 ```bash
 ./construir.sh                      # regenera dist/Mis nubes.desktop
@@ -85,7 +87,7 @@ python3 src/mis_nubes.py            # o ejecuta el programa directamente
 
 Creado por **Jose Callejas** ([@Callejasto](https://github.com/Callejasto)) y **Claude** (Anthropic).
 
-Funciona gracias a [rclone](https://rclone.org) (licencia MIT). Los iconos de los servicios provienen del tema libre [Papirus](https://github.com/PapirusDevelopmentTeam/papirus-icon-theme) (GPL-3.0), instalado desde los repositorios del sistema; las marcas y logotipos pertenecen a sus respectivos dueños. Los iconos de Proton Drive y Koofr de la carpeta [`icons`](icons) son diseños originales de este proyecto, no sus logotipos oficiales. Este proyecto no está afiliado a Google, Microsoft, Apple ni a ningún otro servicio.
+Funciona gracias a [rclone](https://rclone.org) (licencia MIT). Los iconos de los servicios provienen del tema libre [Papirus](https://github.com/PapirusDevelopmentTeam/papirus-icon-theme) (GPL-3.0), instalado desde los repositorios del sistema; las marcas y logotipos pertenecen a sus respectivos dueños. Los iconos de Proton Drive, Koofr, Amazon S3 y Backblaze B2 de la carpeta [`icons`](icons) son diseños originales de este proyecto, no sus logotipos oficiales. Este proyecto no está afiliado a Google, Microsoft, Apple ni a ningún otro servicio.
 
 ## Licencia
 

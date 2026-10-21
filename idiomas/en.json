@@ -300,5 +300,22 @@
   "Todavía se está haciendo algo. ¿Cerrar de todas formas?": "Something is still in progress. Close anyway?",
   "Faltan algunos programas necesarios. Cierra esta ventana y vuelve a abrir el archivo «Mis nubes» para instalarlos.": "Some required programs are missing. Close this window and open the “Mis nubes” file again to install them.",
   "Novedad: iCloud Fotos ahora funciona en línea, sin copiar las fotos a tu ordenador. Para usarlo, pulsa «Añadir nube» y elige «iCloud Fotos».\n\nLas fotos que ya se habían copiado siguen en la carpeta «{carpetas}». Si no las necesitas, puedes borrar esa carpeta para liberar espacio.": "New: iCloud Photos now works online, without copying photos to your computer. To use it, press “Add cloud” and choose “iCloud Photos”.\n\nThe photos that were already copied are still in the “{carpetas}” folder. If you don't need them, you can delete that folder to free up space.",
-  "Tus nubes como carpetas normales": "Your clouds as regular folders"
+  "Tus nubes como carpetas normales": "Your clouds as regular folders",
+  "No se pudo descargar la actualización. Comprueba tu internet.": "Could not download the update. Check your internet.",
+  "La descarga llegó dañada o no es auténtica. No se instaló nada.": "The download arrived damaged or is not authentic. Nothing was installed.",
+  "La actualización descargada no es válida. No se instaló nada.": "The downloaded update is not valid. Nothing was installed.",
+  "No se pudo instalar la actualización.": "Could not install the update.",
+  "Novedades": "What's new",
+  "Ahora no": "Not now",
+  "Actualizar": "Update",
+  "Hay una versión nueva: {v}": "A new version is available: {v}",
+  "Tienes la {actual}. Se actualiza en unos segundos y tus nubes no se tocan.": "You have {actual}. It updates in a few seconds and your clouds are not touched.",
+  "Descargando y comprobando la versión nueva…": "Downloading and checking the new version…",
+  "Mis nubes se actualizó a la versión {v}.\n\n¿Reiniciar ahora para usarla? Tus nubes siguen funcionando mientras tanto.": "My Clouds was updated to version {v}.\n\nRestart now to use it? Your clouds keep working in the meantime.",
+  "Actualizado. La versión nueva se usará la próxima vez que abras Mis nubes.": "Updated. The new version will be used the next time you open My Clouds.",
+  "Buscar actualizaciones al abrir": "Check for updates on startup",
+  "Buscar actualizaciones ahora": "Check for updates now",
+  "Buscando…": "Checking…",
+  "No se pudo comprobar si hay versiones nuevas. Revisa tu conexión a internet e inténtalo más tarde.": "Could not check for new versions. Check your internet connection and try again later.",
+  "Tienes la última versión ({v}).": "You have the latest version ({v})."
 }

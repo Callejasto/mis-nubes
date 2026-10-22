@@ -71,7 +71,7 @@ def _(texto):
 
 def leer_ajustes():
     try:
-        return json.loads(AJUSTES.read_text())
+        return json.loads(AJUSTES.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
 
@@ -80,7 +80,7 @@ def guardar_ajuste(clave, valor):
     datos = leer_ajustes()
     datos[clave] = valor
     AJUSTES.parent.mkdir(parents=True, exist_ok=True)
-    AJUSTES.write_text(json.dumps(datos, ensure_ascii=False, indent=2))
+    AJUSTES.write_text(json.dumps(datos, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def carpetas_idiomas():
@@ -113,7 +113,7 @@ def catalogo(codigo):
     for carpeta in carpetas_idiomas():
         f = carpeta / f"{codigo}.json"
         try:
-            datos = json.loads(f.read_text())
+            datos = json.loads(f.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         cat.update({k: v for k, v in datos.items() if not k.startswith("_") and v})
@@ -920,7 +920,7 @@ def preparar_sistema():
         destino = APP_DIR / "mis_nubes.py"
         origen = Path(__file__).resolve()
         try:
-            instalada = version_de_codigo(destino.read_text())
+            instalada = version_de_codigo(destino.read_text(encoding="utf-8"))
         except OSError:
             instalada = (0,)
         if origen != destino and instalada <= version_tupla(VERSION):
@@ -947,7 +947,7 @@ ACCESO_INICIO = (Path(os.environ.get("APPDATA", HOME / "AppData/Roaming"))
 
 def version_instalada_windows():
     try:
-        return version_tupla(VERSION_INSTALADA.read_text())
+        return version_tupla(VERSION_INSTALADA.read_text(encoding="utf-8"))
     except OSError:
         return (0,)
 
@@ -983,7 +983,7 @@ def preparar_windows():
             if EXE_INSTALADO.exists():
                 EXE_INSTALADO.replace(viejo)
             tmp.replace(EXE_INSTALADO)
-            VERSION_INSTALADA.write_text(VERSION)
+            VERSION_INSTALADA.write_text(VERSION, encoding="utf-8")
         if not ACCESO_INICIO.exists():
             ACCESO_INICIO.parent.mkdir(parents=True, exist_ok=True)
             crear_acceso_directo(ACCESO_INICIO, EXE_INSTALADO)
@@ -1043,7 +1043,7 @@ def abrir_version_mas_nueva():
     try:
         if Path(__file__).resolve() == PROGRAMA_INSTALADO.resolve():
             return
-        instalada = version_de_codigo(PROGRAMA_INSTALADO.read_text())
+        instalada = version_de_codigo(PROGRAMA_INSTALADO.read_text(encoding="utf-8"))
     except OSError:
         return
     if instalada > version_tupla(VERSION):
@@ -1127,7 +1127,7 @@ def tarea_actualizar(info, aviso_progreso):
     try:
         APP_DIR.mkdir(parents=True, exist_ok=True)
         tmp = PROGRAMA_INSTALADO.with_suffix(".nuevo")
-        tmp.write_text(codigo)
+        tmp.write_text(codigo, encoding="utf-8")
         os.replace(tmp, PROGRAMA_INSTALADO)
     except OSError as e:
         return (False, _("No se pudo instalar la actualización."), str(e))
@@ -1136,7 +1136,7 @@ def tarea_actualizar(info, aviso_progreso):
         try:
             for f in (HOME / carpeta).glob("*.desktop"):
                 if "Name=Mis nubes" in f.read_text(errors="ignore"):
-                    f.write_text(lanzador.replace("Icon=folder-cloud", f"Icon={ICONO_RUTA}"))
+                    f.write_text(lanzador.replace("Icon=folder-cloud", f"Icon={ICONO_RUTA}"), encoding="utf-8")
         except OSError:
             pass
     return (True, info["version"], "")
@@ -1161,7 +1161,7 @@ def actualizar_exe(datos, info):
         if EXE_INSTALADO.exists():
             EXE_INSTALADO.replace(viejo)
         tmp.replace(EXE_INSTALADO)
-        VERSION_INSTALADA.write_text(info["version"])
+        VERSION_INSTALADA.write_text(info["version"], encoding="utf-8")
         if not ACCESO_INICIO.exists():
             crear_acceso_directo(ACCESO_INICIO, EXE_INSTALADO)
     except OSError as e:
@@ -1416,13 +1416,13 @@ def instalar_extras():
         return
     try:
         ICONO_RUTA.parent.mkdir(parents=True, exist_ok=True)
-        if not ICONO_RUTA.exists() or ICONO_RUTA.read_text() != ICONO_SVG:
-            ICONO_RUTA.write_text(ICONO_SVG)
+        if not ICONO_RUTA.exists() or ICONO_RUTA.read_text(encoding="utf-8") != ICONO_SVG:
+            ICONO_RUTA.write_text(ICONO_SVG, encoding="utf-8")
             run(["gtk-update-icon-cache", "-q", str(HOME / ".local/share/icons/hicolor")])
         menu = HOME / ".local/share/applications/mis-nubes.desktop"
         if menu.exists():
-            texto = menu.read_text().replace("Icon=folder-cloud", "Icon=mis-nubes")
-            menu.write_text(texto)
+            texto = menu.read_text(encoding="utf-8").replace("Icon=folder-cloud", "Icon=mis-nubes")
+            menu.write_text(texto, encoding="utf-8")
     except OSError:
         pass
     # El archivo «Mis nubes.desktop» descargado: ponerle también el icono propio
@@ -1431,7 +1431,7 @@ def instalar_extras():
             for f in (HOME / carpeta).glob("*.desktop"):
                 t = f.read_text(errors="ignore")
                 if "Name=Mis nubes" in t and "Icon=folder-cloud" in t:
-                    f.write_text(t.replace("Icon=folder-cloud", f"Icon={ICONO_RUTA}"))
+                    f.write_text(t.replace("Icon=folder-cloud", f"Icon={ICONO_RUTA}"), encoding="utf-8")
         except OSError:
             pass
     # Atajo «Mis nubes» en el panel lateral del explorador de archivos (Dolphin)
@@ -1441,7 +1441,7 @@ def instalar_extras():
         from xml.sax.saxutils import escape
         destino = escape("file://" + quote(str(BASE)), {'"': "&quot;"})
         if xbel.exists():
-            t = xbel.read_text()
+            t = xbel.read_text(encoding="utf-8")
             if destino not in t and "</xbel>" in t:
                 shutil.copyfile(xbel, xbel.with_suffix(".xbel.copia-mis-nubes"))
                 icono = ('<info><metadata owner="http://freedesktop.org">'
@@ -1450,7 +1450,7 @@ def instalar_extras():
                 entrada = (f' <bookmark href="{destino}">\n  <title>{escape(_(APP))}</title>\n'
                            f'  {icono}\n </bookmark>\n')
                 i = t.rindex("</xbel>")
-                xbel.write_text(t[:i] + entrada + t[i:])
+                xbel.write_text(t[:i] + entrada + t[i:], encoding="utf-8")
                 BASE.mkdir(parents=True, exist_ok=True)
     except (OSError, ValueError):
         pass
@@ -1467,7 +1467,7 @@ def migrar_fotos_copia():
     if WINDOWS:
         return []       # esa versión nunca existió en Windows
     try:
-        lista = json.loads(FOTOS_CFG.read_text())
+        lista = json.loads(FOTOS_CFG.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return []
     carpetas = []
@@ -1580,7 +1580,7 @@ ESPACIO_CACHE = CACHE_DIR / "espacio.json"
 
 def espacio_guardado():
     try:
-        return json.loads(ESPACIO_CACHE.read_text())
+        return json.loads(ESPACIO_CACHE.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
 
@@ -1604,7 +1604,7 @@ def tarea_espacio(remoto, datos):
             cache = espacio_guardado()
             cache[remoto] = [usado, total, time.time()]
             ESPACIO_CACHE.parent.mkdir(parents=True, exist_ok=True)
-            ESPACIO_CACHE.write_text(json.dumps(cache))
+            ESPACIO_CACHE.write_text(json.dumps(cache), encoding="utf-8")
         except OSError:
             pass
     return (remoto, usado, total)
@@ -1754,8 +1754,8 @@ def _icono_oficial(clave):
         try:
             ICONOS_CACHE.mkdir(parents=True, exist_ok=True)
             f = ICONOS_CACHE / f"{clave}.svg"
-            if not f.exists() or f.read_text() != ICONOS_PROPIOS[clave]:
-                f.write_text(ICONOS_PROPIOS[clave])
+            if not f.exists() or f.read_text(encoding="utf-8") != ICONOS_PROPIOS[clave]:
+                f.write_text(ICONOS_PROPIOS[clave], encoding="utf-8")
             encontrado = QIcon(str(f))
         except OSError:
             pass

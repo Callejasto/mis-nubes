@@ -14,10 +14,8 @@ a = Analysis(
     hookspath=[],
     runtime_hooks=[],
     # Módulos de Qt que el programa no usa: el .exe queda más pequeño
-    excludes=["PyQt6.QtNetwork", "PyQt6.QtQml", "PyQt6.QtQuick", "PyQt6.QtMultimedia",
-              "PyQt6.QtWebEngineCore", "PyQt6.QtPdf", "PyQt6.QtDBus", "PyQt6.QtOpenGL",
-              "PyQt6.QtPrintSupport", "PyQt6.QtSql", "PyQt6.QtTest", "PyQt6.QtXml",
-              "tkinter", "unittest", "pydoc"],
+    excludes=["PyQt6.QtQml", "PyQt6.QtQuick", "PyQt6.QtMultimedia", "PyQt6.QtWebEngineCore",
+              "PyQt6.QtPdf", "PyQt6.QtSql", "PyQt6.QtTest", "tkinter", "unittest", "pydoc"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

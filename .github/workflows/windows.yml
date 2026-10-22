@@ -36,17 +36,26 @@ jobs:
           print(f"VERSION = {v}, etiqueta = {tag}")
           sys.exit(0 if v == tag else "La etiqueta no coincide con VERSION en src/mis_nubes.py")
 
+      - name: Comprobar el código con el Python de Windows
+        run: python src/mis_nubes.py --exportar-idioma en | Select-Object -First 3
+
       - name: Compilar
         run: python construir-windows.py
 
-      - name: Comprobar que arranca
+      - name: Comprobar que el .exe arranca
         shell: pwsh
         run: |
           $exe = "dist\Mis nubes.exe"
           if (-not (Test-Path $exe)) { throw "No se generó $exe" }
           "{0:N1} MB" -f ((Get-Item $exe).Length / 1MB)
-          # --exportar-idioma termina solo, sin abrir ventana: sirve para ver que el .exe arranca
-          $p = Start-Process -FilePath $exe -ArgumentList "--exportar-idioma", "en" -Wait -PassThru
+          # --exportar-idioma termina solo, sin abrir ventana: sirve para ver que el .exe arranca.
+          # Si en 2 minutos no ha terminado, es que mostró un cuadro de error: se mata y se enseña.
+          $p = Start-Process -FilePath $exe -ArgumentList "--exportar-idioma", "en" -PassThru
+          $ok = $p.WaitForExit(120000)
+          if (-not $ok) { Stop-Process -Id $p.Id -Force; Get-Process -Name "Mis nubes" -ErrorAction SilentlyContinue | Stop-Process -Force }
+          $log = "$env:LOCALAPPDATA\mis-nubes\error.log"
+          if (Test-Path $log) { "--- error.log ---"; Get-Content $log }
+          if (-not $ok) { throw "El .exe no terminó en 2 minutos (ventana de error o bloqueo)" }
           if ($p.ExitCode -ne 0) { throw "El .exe terminó con código $($p.ExitCode)" }
 
       - name: Guardar como artefacto

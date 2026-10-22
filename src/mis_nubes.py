@@ -3766,8 +3766,22 @@ def exportar_idioma(codigo):
     print(json.dumps(plantilla, ensure_ascii=False, indent=2))
 
 
-if __name__ == "__main__":
+def arrancar():
     if len(sys.argv) >= 3 and sys.argv[1] == "--exportar-idioma":
         exportar_idioma(sys.argv[2])
-        sys.exit(0)
-    sys.exit(main())
+        return 0
+    return main()
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(arrancar())
+    except Exception:  # noqa: BLE001
+        # Sin consola (el .exe de Windows) un fallo no se vería: se guarda para poder mirarlo
+        import traceback
+        try:
+            APP_DIR.mkdir(parents=True, exist_ok=True)
+            (APP_DIR / "error.log").write_text(traceback.format_exc(), encoding="utf-8")
+        except OSError:
+            pass
+        raise

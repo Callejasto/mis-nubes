@@ -260,7 +260,7 @@
   "Volver a iniciar sesión": "Sign in again",
   "Acerca de Mis nubes": "About My Clouds",
   "Versión {v}": "Version {v}",
-  "Tus nubes como carpetas normales en Linux: Google Drive, OneDrive, iCloud, Dropbox, MEGA y muchas más.": "Your clouds as regular folders on Linux: Google Drive, OneDrive, iCloud, Dropbox, MEGA and many more.",
+  "Tus nubes como carpetas normales en tu ordenador: Google Drive, OneDrive, iCloud, Dropbox, MEGA y muchas más.": "Your clouds as regular folders on your computer: Google Drive, OneDrive, iCloud, Dropbox, MEGA and many more.",
   "Funciona gracias a <b>rclone</b> (rclone.org), un programa libre. Iconos de los servicios: tema libre <b>Papirus</b>.": "Powered by <b>rclone</b> (rclone.org), a free program. Service icons: the free <b>Papirus</b> theme.",
   "Idioma:": "Language:",
   "Automático (el del sistema)": "Automatic (system language)",
@@ -317,5 +317,11 @@
   "Buscar actualizaciones ahora": "Check for updates now",
   "Buscando…": "Checking…",
   "No se pudo comprobar si hay versiones nuevas. Revisa tu conexión a internet e inténtalo más tarde.": "Could not check for new versions. Check your internet connection and try again later.",
-  "Tienes la última versión ({v}).": "You have the latest version ({v})."
+  "Tienes la última versión ({v}).": "You have the latest version ({v}).",
+  "Preparando Mis nubes": "Setting up My Clouds",
+  "Solo pasa la primera vez. Se descargan dos programas libres que hacen falta: <b>rclone</b> (conecta con las nubes) y <b>WinFsp</b> (muestra las nubes como carpetas). Windows te pedirá permiso para instalar WinFsp: pulsa «Sí».": "This only happens the first time. Two free programs that are needed will be downloaded: <b>rclone</b> (connects to the clouds) and <b>WinFsp</b> (shows the clouds as folders). Windows will ask for permission to install WinFsp: press \"Yes\".",
+  "Descargando rclone (unos 25 MB)…": "Downloading rclone (about 25 MB)…",
+  "No se pudo descargar rclone. Comprueba tu internet e inténtalo de nuevo.": "Could not download rclone. Check your internet connection and try again.",
+  "Descargando e instalando WinFsp… Si Windows pregunta, pulsa «Sí».": "Downloading and installing WinFsp… If Windows asks, press \"Yes\".",
+  "No se pudo instalar WinFsp. Puedes instalarlo tú desde winfsp.dev y volver a abrir Mis nubes.": "Could not install WinFsp. You can install it yourself from winfsp.dev and open My Clouds again."
 }

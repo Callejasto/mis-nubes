@@ -1193,6 +1193,13 @@ def version_de_codigo(codigo):
     return version_tupla(m.group(1)) if m else (0,)
 
 
+def entorno_limpio():
+    """Entorno para abrir otra copia del programa. El ejecutable de Windows (PyInstaller) pasa a
+    sus hijos la variable _MEIPASS2 con su carpeta temporal; si otra copia la hereda, usa esa
+    carpeta en vez de la suya y se queda sin archivos cuando la primera se cierra y la borra."""
+    return {k: v for k, v in os.environ.items() if not k.startswith(("_MEIPASS", "_PYI"))}
+
+
 def abrir_version_mas_nueva():
     """Si se abrió un lanzador viejo pero ya hay instalada una versión más nueva, abre esa."""
     if WINDOWS:
@@ -1204,7 +1211,8 @@ def abrir_version_mas_nueva():
         except OSError:
             return
         if EXE_INSTALADO.exists() and version_instalada_windows() > version_tupla(VERSION):
-            subprocess.Popen([str(EXE_INSTALADO), *sys.argv[1:]], close_fds=True)
+            subprocess.Popen([str(EXE_INSTALADO), *sys.argv[1:]], close_fds=True,
+                             env=entorno_limpio())
             os._exit(0)
         return
     try:
@@ -1221,7 +1229,7 @@ def reiniciar_programa():
     """Vuelve a abrir Mis nubes con la versión instalada (tras actualizar)."""
     if WINDOWS:
         subprocess.Popen([str(EXE_INSTALADO)] if CONGELADO else [sys.executable, *sys.argv],
-                         close_fds=True)
+                         close_fds=True, env=entorno_limpio())
         os._exit(0)
     os.execv(sys.executable, [sys.executable, str(PROGRAMA_INSTALADO)])
 
@@ -1529,7 +1537,7 @@ def titulo_grande(texto, extra=6):
 
 
 # ================================================================ versión y créditos
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 CREDITOS = "Creado por Jose Callejas (Callejasto) y Claude (Anthropic)"
 
 # ================================================================ icono propio

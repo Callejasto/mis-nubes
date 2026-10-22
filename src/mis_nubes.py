@@ -903,11 +903,15 @@ def escribir_unidad(remoto, datos):
     programa = shutil.which(RCLONE) or RCLONE
     archivo = UNIT_DIR / unidad_de(remoto)
     if WINDOWS:
-        args = argumentos_montaje(remoto, datos)[1:]
+        # rclone es un programa de consola: lanzado tal cual por el Programador de tareas deja una
+        # ventana negra abierta. conhost --headless lo ejecuta sin ventana desde el principio.
+        args = argumentos_montaje(remoto, datos)
+        conhost = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "conhost.exe"
         archivo.write_text(TAREA_XML.format(
             titulo=xml_escape(titulo.replace("\n", " ")), nombre=xml_escape(tarea_de(remoto)[10:]),
-            usuario=xml_escape(usuario_windows()), programa=xml_escape(programa),
-            argumentos=xml_escape("mount " + " ".join(q_win(a) for a in args))), encoding="utf-16")
+            usuario=xml_escape(usuario_windows()), programa=xml_escape(str(conhost)),
+            argumentos=xml_escape("--headless " + " ".join(q_win(a) for a in [programa, *args]))),
+            encoding="utf-16")
         ERROR_SISTEMA["texto"] = ""
         schtasks("/Create", "/F", "/TN", tarea_de(remoto), "/XML", str(archivo))
         return
@@ -926,10 +930,27 @@ def desmontar(remoto, ruta):
             if not montado(ruta):
                 break
             time.sleep(0.5)
+        if montado(ruta):
+            cerrar_rclone_mount(remoto)
+            for _intento in range(10):
+                if not montado(ruta):
+                    break
+                time.sleep(0.5)
         return
     run(["systemctl", "--user", "stop", unidad_de(remoto)])
     if montado(ruta):
         run(["fusermount3", "-uz", str(ruta)])
+
+
+def cerrar_rclone_mount(remoto):
+    """Windows: cierra el rclone que tiene abierta esta nube (si la tarea no lo paró)."""
+    patron = re.escape(f" mount {remoto}: ")
+    try:
+        powershell("Get-CimInstance Win32_Process -Filter \"Name like 'rclone%'\" | "
+                   f"Where-Object {{ $_.CommandLine -match '{patron}' }} | "
+                   "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }", timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def apartar_carpeta(ruta):
@@ -1508,7 +1529,7 @@ def titulo_grande(texto, extra=6):
 
 
 # ================================================================ versión y créditos
-VERSION = "1.4"
+VERSION = "1.4.1"
 CREDITOS = "Creado por Jose Callejas (Callejasto) y Claude (Anthropic)"
 
 # ================================================================ icono propio

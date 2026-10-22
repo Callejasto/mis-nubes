@@ -83,6 +83,14 @@ def guardar_ajuste(clave, valor):
     AJUSTES.write_text(json.dumps(datos, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def carpeta_recursos():
+    """Carpeta con los recursos del programa (icons/, idiomas/): la del repositorio o, dentro del
+    ejecutable de Windows (PyInstaller), la temporal _MEIPASS."""
+    if CONGELADO:
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    return Path(__file__).resolve().parent.parent
+
+
 def carpetas_idiomas():
     aqui = Path(__file__).resolve().parent
     carpetas = [aqui / "idiomas", aqui.parent / "idiomas", APP_DIR / "idiomas"]
@@ -480,14 +488,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=notify
 ExecStartPre=/usr/bin/mkdir -p {ruta}
-ExecStart={programa} mount {remoto} {ruta} \\
-    --vfs-cache-mode full \\
-    --vfs-cache-max-size 20G \\
-    --dir-cache-time 1h \\
-    --poll-interval 1m \\
-    --umask 022 \\
-    --volname {titulo_q} \\
-    --log-level NOTICE{extra}
+ExecStart={programa} mount {remoto} {ruta}{extra}
 ExecStop=/usr/bin/fusermount3 -uz {ruta}
 Restart=on-failure
 RestartSec=10
@@ -499,7 +500,14 @@ WantedBy=default.target
 # Opciones de montaje comunes a Linux y Windows
 MONTAJE_OPCIONES = ["--vfs-cache-mode", "full", "--vfs-cache-max-size", "20G",
                     "--dir-cache-time", "1h", "--poll-interval", "1m", "--umask", "022",
-                    "--log-level", "NOTICE"]
+                    "--log-level", "NOTICE",
+                    # Velocidad: varios flujos por archivo, lectura adelantada y más transferencias
+                    "--vfs-read-chunk-streams", "4", "--vfs-read-chunk-size", "64M",
+                    "--vfs-read-ahead", "256M", "--buffer-size", "32M",
+                    "--transfers", "8", "--checkers", "16", "--vfs-fast-fingerprint",
+                    # Trozos de subida grandes (solo afectan a su servicio; los demás los ignoran)
+                    "--drive-chunk-size", "64M", "--onedrive-chunk-size", "60M",
+                    "--dropbox-chunk-size", "128M"]
 MONTAJE_FOTOS = ["--read-only", "--vfs-refresh", "--attr-timeout", "1m"]
 
 # Windows: tarea del Programador de tareas que ejecuta «rclone mount» al iniciar sesión,
@@ -677,8 +685,114 @@ def titulo_de(remoto, datos):
     return (datos.get("description") or "").strip() or remoto
 
 
+# ---------------------------------------------- Windows: unidad con letra o carpeta
+# Cada nube se guarda en ajustes["montajes"][remoto] = {"modo": "unidad"|"carpeta", "letra": "G"}
+LETRAS = "GHIJKLMNOPQRSTUVWXYZ"
+
+
+def montajes_guardados():
+    return leer_ajustes().get("montajes", {}) if WINDOWS else {}
+
+
+def guardar_montaje(remoto, **campos):
+    d = leer_ajustes().get("montajes", {})
+    d.setdefault(remoto, {}).update(campos)
+    guardar_ajuste("montajes", d)
+
+
+def olvidar_montaje(remoto):
+    d = leer_ajustes().get("montajes", {})
+    if remoto in d:
+        del d[remoto]
+        guardar_ajuste("montajes", d)
+
+
+def modo_de(remoto):
+    """«unidad» (letra en «Este equipo», lo normal en Windows) o «carpeta» (dentro de Nube)."""
+    if not WINDOWS:
+        return "carpeta"
+    return montajes_guardados().get(remoto, {}).get("modo", "unidad")
+
+
+def letra_de(remoto):
+    return montajes_guardados().get(remoto, {}).get("letra")
+
+
+def volname_de(remoto, datos):
+    """Etiqueta del volumen: el nombre de la nube (Windows admite 32 caracteres y expandiría %VAR%)."""
+    return titulo_de(remoto, datos).replace("\n", " ").replace("%", "")[:32]
+
+
+def etiqueta_volumen(letra):
+    """Windows: etiqueta de la unidad «letra:», o None si no hay ninguna unidad ahí."""
+    try:
+        import ctypes
+        nombre = ctypes.create_unicode_buffer(261)
+        ok = ctypes.windll.kernel32.GetVolumeInformationW(
+            f"{letra}:\\", nombre, 261, None, None, None, None, 0)
+        return nombre.value if ok else None
+    except (AttributeError, OSError):
+        return None
+
+
+def unidad_viva(remoto, datos):
+    """La unidad de esta nube está abierta ahora (hay un volumen con su nombre en su letra)."""
+    letra = letra_de(remoto)
+    return bool(letra) and etiqueta_volumen(letra) == volname_de(remoto, datos)
+
+
+def letra_libre(letra):
+    return not os.path.exists(f"{letra}:\\")
+
+
+def letra_siguiente_libre(excluir=()):
+    usadas = {v.get("letra") for v in montajes_guardados().values()} | set(excluir)
+    for letra in LETRAS:
+        if letra not in usadas and letra_libre(letra):
+            return letra
+    return None
+
+
+def asignar_letra(remoto, datos):
+    """Letra de unidad para esta nube: la que ya tenía (si sigue libre o es ella misma) o una nueva."""
+    letra = letra_de(remoto)
+    if letra and (letra_libre(letra) or unidad_viva(remoto, datos)):
+        return letra
+    nueva = letra_siguiente_libre()
+    if nueva is None:
+        ERROR_SISTEMA["texto"] = "no queda ninguna letra de unidad libre (de la G a la Z)"
+        return None
+    guardar_montaje(remoto, letra=nueva)
+    return nueva
+
+
 def carpeta_de(remoto, datos):
+    """Dónde aparece la nube: «G:\\» (unidad) o Nube/<nombre> (carpeta)."""
+    if WINDOWS and modo_de(remoto) == "unidad":
+        letra = letra_de(remoto) or asignar_letra(remoto, datos) or "?"
+        return Path(f"{letra}:\\")
     return BASE / limpiar_nombre(titulo_de(remoto, datos))
+
+
+def es_unidad(ruta):
+    return WINDOWS and len(str(ruta)) == 3 and str(ruta)[1:] == ":\\"
+
+
+def letra_unidad(ruta):
+    """«G:» de una ruta de unidad."""
+    return str(ruta)[:2]
+
+
+def describir_destino(remoto, datos):
+    """«la unidad <b>G:</b> de «Este equipo»» o «la carpeta <b>Nube › Drive</b>» (para mensajes)."""
+    ruta = carpeta_de(remoto, datos)
+    if es_unidad(ruta):
+        return _("la unidad <b>{letra}</b> de «Este equipo»").format(letra=letra_unidad(ruta))
+    return _("la carpeta <b>{base} › {carpeta}</b>").format(base=BASE.name, carpeta=ruta.name)
+
+
+def clave_ruta(ruta):
+    return os.path.normcase(os.path.abspath(str(ruta)))
 
 
 def unidad_de(remoto):
@@ -693,11 +807,16 @@ def tarea_de(remoto):
 
 
 def puntos_de_montaje():
-    """Carpetas montadas ahora mismo (no entra en ellas: nunca se bloquea)."""
+    """Carpetas y unidades montadas ahora mismo (no entra en ellas: nunca se bloquea)."""
     if WINDOWS:
-        # En Windows, WinFsp presenta la nube como un «punto de reanálisis» dentro de la carpeta
-        # base; cuando rclone termina, la carpeta desaparece. Basta mirar ahí.
         puntos = set()
+        # Unidades con letra: hay un volumen con el nombre de la nube en su letra
+        dump = config_dump()
+        for remoto, m in montajes_guardados().items():
+            if m.get("modo", "unidad") == "unidad" and remoto in dump and unidad_viva(remoto, dump[remoto]):
+                puntos.add(clave_ruta(f"{m['letra']}:\\"))
+        # Carpetas: WinFsp presenta la nube como un «punto de reanálisis» dentro de la carpeta
+        # base; cuando rclone termina, la carpeta desaparece. Basta mirar ahí.
         try:
             for hijo in os.scandir(BASE):
                 try:
@@ -709,7 +828,7 @@ def puntos_de_montaje():
                         os.stat(hijo.path)      # si rclone no está detrás, falla: enlace muerto
                     except OSError:
                         continue
-                    puntos.add(os.path.abspath(hijo.path))
+                    puntos.add(clave_ruta(hijo.path))
         except OSError:
             pass
         return puntos
@@ -723,12 +842,12 @@ def puntos_de_montaje():
         campos = linea.split(" ")
         if len(campos) > 4:
             # el kernel escribe espacios y otros caracteres como \040, \011…
-            puntos.add(re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), campos[4]))
+            puntos.add(clave_ruta(re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), campos[4])))
     return puntos
 
 
 def montado(ruta):
-    return os.path.abspath(str(ruta)) in puntos_de_montaje()
+    return clave_ruta(ruta) in puntos_de_montaje()
 
 
 def es_enlace_muerto(ruta):
@@ -746,14 +865,30 @@ def es_enlace_muerto(ruta):
         return True
 
 
+_VERSION_RCLONE = {}
+
+
+def version_rclone():
+    """(1, 75, 1) del rclone en uso; (0,) si no se puede saber."""
+    if RCLONE not in _VERSION_RCLONE:
+        try:
+            primera = (run([RCLONE, "version"], timeout=20).stdout or "").splitlines()[0]
+            _VERSION_RCLONE[RCLONE] = version_tupla(primera)
+        except (OSError, IndexError, subprocess.TimeoutExpired):
+            _VERSION_RCLONE[RCLONE] = (0,)
+    return _VERSION_RCLONE[RCLONE]
+
+
 def argumentos_montaje(remoto, datos):
     ruta = carpeta_de(remoto, datos)
     extra = MONTAJE_FOTOS if datos.get("service") == "photos" else []
-    volname = titulo_de(remoto, datos).replace("\n", " ")
-    if WINDOWS:
-        # límite de 32 caracteres; el Programador de tareas expandiría %VARIABLES%
-        volname = volname.replace("%", "")[:32]
-    args = ["mount", f"{remoto}:", str(ruta), *MONTAJE_OPCIONES, "--volname", volname, *extra]
+    opciones = list(MONTAJE_OPCIONES)
+    if version_rclone() < (1, 68):          # flujos paralelos: solo en rclone 1.68 o más nuevo
+        i = opciones.index("--vfs-read-chunk-streams")
+        del opciones[i:i + 2]
+    volname = volname_de(remoto, datos) if WINDOWS else titulo_de(remoto, datos).replace("\n", " ")
+    destino = letra_unidad(ruta) if es_unidad(ruta) else str(ruta)      # «G:» para una unidad
+    args = ["mount", f"{remoto}:", destino, *opciones, "--volname", volname, *extra]
     if WINDOWS:
         registro = APP_DIR / "registros" / (unidad_de(remoto)[:-4] + ".log")
         registro.parent.mkdir(parents=True, exist_ok=True)
@@ -776,8 +911,7 @@ def escribir_unidad(remoto, datos):
         ERROR_SISTEMA["texto"] = ""
         schtasks("/Create", "/F", "/TN", tarea_de(remoto), "/XML", str(archivo))
         return
-    extra = (" \\\n    --read-only --vfs-refresh --attr-timeout 1m"
-             if datos.get("service") == "photos" else "")
+    extra = " \\\n    " + " ".join(q(a) for a in argumentos_montaje(remoto, datos)[3:])
     archivo.write_text(UNIT.format(
         titulo=titulo.replace("\n", " ").replace("%", "%%"), titulo_q=q(titulo), ruta=q(str(ruta)),
         remoto=q(f"{remoto}:"), programa=q(programa), extra=extra))
@@ -801,6 +935,8 @@ def desmontar(remoto, ruta):
 def apartar_carpeta(ruta):
     """Si en el sitio de la nube hay una carpeta normal con cosas, se renombra para no perderlas.
     Deja la ruta lista: vacía (Linux) o inexistente (Windows, donde WinFsp la crea él)."""
+    if es_unidad(ruta):
+        return              # la letra la gestiona asignar_letra
     BASE.mkdir(parents=True, exist_ok=True)
     if montado(ruta):      # sigue abierta: no se toca (sería la nube, no una carpeta normal)
         return
@@ -823,6 +959,11 @@ def apartar_carpeta(ruta):
 
 def montar(remoto):
     datos = config_dump().get(remoto, {})
+    ERROR_SISTEMA["texto"] = ""
+    if WINDOWS and modo_de(remoto) == "unidad":
+        desmontar(remoto, carpeta_de(remoto, datos))
+        if asignar_letra(remoto, datos) is None:
+            return False
     ruta = carpeta_de(remoto, datos)
     escribir_unidad(remoto, datos)
     unidad = unidad_de(remoto)
@@ -840,7 +981,9 @@ def montar(remoto):
     return False
 
 
-def quitar_unidad(remoto, datos):
+def quitar_unidad(remoto, datos, olvidar=True):
+    """Para la nube y quita su arranque automático. olvidar=False conserva el modo y la letra
+    (para volver a montarla enseguida, por ejemplo al cambiarle el nombre)."""
     unidad = unidad_de(remoto)
     ruta = carpeta_de(remoto, datos)
     if WINDOWS:
@@ -853,10 +996,13 @@ def quitar_unidad(remoto, datos):
     (UNIT_DIR / unidad).unlink(missing_ok=True)
     if not WINDOWS:
         run(["systemctl", "--user", "daemon-reload"])
-    try:
-        ruta.rmdir()
-    except OSError:
-        pass
+    if not es_unidad(ruta):
+        try:
+            ruta.rmdir()
+        except OSError:
+            pass
+    if WINDOWS and olvidar:
+        olvidar_montaje(remoto)
 
 
 def proveedores():
@@ -1291,7 +1437,7 @@ def tarea_renombrar(remoto, nuevo):
     viejo = config_dump().get(remoto, {})
     unidad_existia = (UNIT_DIR / unidad_de(remoto)).exists()
     if unidad_existia:
-        quitar_unidad(remoto, viejo)
+        quitar_unidad(remoto, viejo, olvidar=False)
     r = run([RCLONE, "config", "update", remoto, f"description={nuevo}",
              "config_refresh_token=false", "--non-interactive"])
     if r.returncode != 0:
@@ -1299,6 +1445,18 @@ def tarea_renombrar(remoto, nuevo):
     if unidad_existia and not montar(remoto):
         return (False, "Nombre cambiado, pero no se pudo abrir la carpeta.")
     return (True, _("Ahora se llama «{nombre}».").format(nombre=nuevo))
+
+
+def tarea_cambiar_modo(remoto, modo):
+    """Windows: pasa una nube de unidad a carpeta o al revés."""
+    datos = config_dump().get(remoto, {})
+    if (UNIT_DIR / unidad_de(remoto)).exists():
+        quitar_unidad(remoto, datos, olvidar=False)
+    guardar_montaje(remoto, modo=modo)
+    if not montar(remoto):
+        return (False, "Se cambió el modo, pero no se pudo abrir la nube. Pulsa «Reintentar».",
+                ERROR_SISTEMA["texto"] or None)
+    return (True, _("Ahora está en {donde}.").format(donde=describir_destino(remoto, datos)))
 
 
 def ofuscar(texto):
@@ -1350,7 +1508,7 @@ def titulo_grande(texto, extra=6):
 
 
 # ================================================================ versión y créditos
-VERSION = "1.3"
+VERSION = "1.4"
 CREDITOS = "Creado por Jose Callejas (Callejasto) y Claude (Anthropic)"
 
 # ================================================================ icono propio
@@ -1412,7 +1570,8 @@ def instalar_extras():
     """Icono propio, acceso en el menú, lanzador descargado con icono y atajo en el explorador."""
     if WINDOWS:
         icono_app()
-        anclar_acceso_rapido()
+        if any(m.get("modo") == "carpeta" for m in montajes_guardados().values()):
+            anclar_acceso_rapido()
         return
     try:
         ICONO_RUTA.parent.mkdir(parents=True, exist_ok=True)
@@ -1748,6 +1907,10 @@ def _icono_oficial(clave):
                     break
             if encontrado:
                 break
+        if not encontrado:      # copia incluida en el programa (Windows, o Linux sin Papirus)
+            f = carpeta_recursos() / "icons" / "papirus" / f"{nombre}.svg"
+            if f.exists():
+                encontrado = QIcon(str(f))
         if encontrado:
             break
     if not encontrado and clave in ICONOS_PROPIOS:
@@ -1854,6 +2017,10 @@ def aplicar_tema(app):
                           font-size: 12pt; padding: 12px 22px; border-radius: 10px; }}
     QPushButton#grande:hover {{ background: {T['acento_h']}; }}
     QPushButton#grande:disabled {{ background: {T['boton2']}; color: {T['gris']}; }}
+    QPushButton#opcion {{ background: {T['campo']}; border: 2px solid {T['campo_borde']}; border-radius: 10px;
+                          padding: 8px 12px; text-align: left; }}
+    QPushButton#opcion:checked {{ border-color: {T['acento']}; background: {T['sel']}; font-weight: 600; }}
+    QPushButton#opcion:hover {{ border-color: {T['acento']}; }}
     QPushButton#enlace {{ background: transparent; color: {T['acento']}; padding: 2px 0; text-align: left; }}
     QPushButton#enlace:hover {{ text-decoration: underline; }}
     QPushButton#redondo {{ border-radius: 16px; padding: 0; min-width: 32px; max-width: 32px;
@@ -2288,6 +2455,24 @@ class Asistente(QDialog):
         self.nombre.textChanged.connect(self._vista_carpeta)
         self.nombre.returnPressed.connect(self.siguiente)
         l.addWidget(self.nombre)
+        self.modo_montaje = "unidad" if WINDOWS else "carpeta"
+        if WINDOWS:
+            l.addSpacing(6)
+            l.addWidget(etiqueta("<b>¿Cómo quieres verla?</b>"))
+            fila = QHBoxLayout()
+            fila.setSpacing(10)
+            self.b_unidad = boton("💽  " + _("Como unidad en «Este equipo»") + "\n"
+                                  + _("Un disco más, con su letra (G:). Recomendado."), "opcion",
+                                  lambda: self._elegir_modo("unidad"))
+            self.b_carpeta = boton("📁  " + _("Como carpeta dentro de «Nube»") + "\n"
+                                   + _("En tu carpeta personal › Nube."), "opcion",
+                                   lambda: self._elegir_modo("carpeta"))
+            for b in (self.b_unidad, self.b_carpeta):
+                b.setCheckable(True)
+                b.setMinimumHeight(58)
+                fila.addWidget(b, 1)
+            self.b_unidad.setChecked(True)
+            l.addLayout(fila)
         self.n_carpeta = etiqueta("", "pequeno")
         l.addWidget(self.n_carpeta)
         l.addSpacing(6)
@@ -2321,9 +2506,22 @@ class Asistente(QDialog):
         self.nombre.setFocus()
         self.nombre.selectAll()
 
-    def _vista_carpeta(self, texto):
+    def _vista_carpeta(self, texto=None):
+        texto = self.nombre.text() if texto is None else texto
+        if WINDOWS and self.modo_montaje == "unidad":
+            letra = letra_siguiente_libre() or "?"
+            self.n_carpeta.setText("💽  " + _("Aparecerá en «Este equipo» como la unidad <b>{letra}:</b> "
+                                             "«{nombre}»").format(letra=letra, nombre=volname_de("", {
+                                                 "description": texto or _("Nube")})))
+            return
         self.n_carpeta.setText("📁  " + _("Se creará la carpeta:  Carpeta personal › {base} › <b>{nombre}</b>")
                                .format(base=BASE.name, nombre=limpiar_nombre(texto or BASE.name)))
+
+    def _elegir_modo(self, modo):
+        self.modo_montaje = modo
+        self.b_unidad.setChecked(modo == "unidad")
+        self.b_carpeta.setChecked(modo == "carpeta")
+        self._vista_carpeta()
 
     def _usados(self):
         return {limpiar_nombre(titulo_de(r, d)).lower() for r, d in self.existentes.items()}
@@ -2576,6 +2774,8 @@ class Asistente(QDialog):
         while self.remoto in self.existentes:
             self.remoto = f"{base}-{n}"
             n += 1
+        if WINDOWS:
+            guardar_montaje(self.remoto, modo=self.modo_montaje)
         self._crear()
 
     def _crear(self):
@@ -2767,19 +2967,25 @@ class Asistente(QDialog):
             self._final(True, "¡Sesión iniciada!", _("«{nombre}» vuelve a funcionar. "
                         "Dentro de 30 días Apple te lo volverá a pedir.").format(nombre=self.titulo))
             return
+        donde = describir_destino(self.remoto, config_dump().get(self.remoto, {}))
         if self.tipo == TIPO_FOTOS:
             self._final(True, "¡iCloud Fotos está listo!",
-                        _("Tus fotos están en la carpeta <b>{base} › {carpeta}</b>, "
+                        _("Tus fotos están en {donde}, "
                           "ordenadas por álbumes (todas juntas están en «All Photos»)."
                           "<br><br>La primera vez puede tardar unos minutos en mostrar todas las "
                           "fotos si tienes muchas. Las siguientes veces irá rápido.")
-                        .format(base=BASE.name, carpeta=self.ruta_final.name))
+                        .format(donde=donde))
             return
+        if es_unidad(self.ruta_final):
+            consejo = _("Consejo: puedes cambiarla a carpeta cuando quieras desde el botón ⋯ de su tarjeta.")
+        elif WINDOWS:
+            consejo = _("Consejo: también la tienes en el panel izquierdo del Explorador, en «Acceso rápido».")
+        else:
+            consejo = _("Consejo: también la tienes en el panel izquierdo del explorador de archivos, en «Mis nubes».")
         self._final(True, _("¡«{nombre}» está lista!").format(nombre=self.titulo),
-                    _("Tus archivos ya aparecen en la carpeta <b>{base} › {carpeta}</b>."
-                      "<br>Se abrirá sola cada vez que enciendas el ordenador."
-                      "<br><br>Consejo: también la tienes en el panel izquierdo del explorador de "
-                      "archivos, en «Mis nubes».").format(base=BASE.name, carpeta=self.ruta_final.name))
+                    _("Tus archivos ya aparecen en {donde}."
+                      "<br>Se abrirá sola cada vez que enciendas el ordenador.").format(donde=donde)
+                    + "<br><br>" + consejo)
 
     def _deshacer(self):
         """Deja la configuración como estaba (nube nueva: se borra; reconexión: se restaura)."""
@@ -2947,6 +3153,8 @@ class Tarjeta(QFrame):
         menu.addAction(_("Abrir la carpeta"), lambda: self.v.abrir(self.ruta))
         self.accion_sesion = menu.addAction(_("Volver a iniciar sesión…"), lambda: self.v.reconectar(self))
         menu.addAction(_("Cambiar nombre…"), lambda: self.v.renombrar(self))
+        self.accion_modo = menu.addAction("", lambda: self.v.cambiar_modo(self))
+        self.accion_modo.setVisible(WINDOWS)
         menu.addSeparator()
         menu.addAction(_("Desconectar…"), lambda: self.v.quitar(self))
         self.mas.setMenu(menu)
@@ -2992,7 +3200,12 @@ class Tarjeta(QFrame):
             self.ico.setPixmap(icono_servicio(clave, servicio, 48))
         self.titulo.setText(self.nombre)
         extra = " · " + _("solo lectura") if clave == TIPO_FOTOS else ""
-        self.sub.setText(f"{servicio}{extra} · {BASE.name} › {self.ruta.name}")
+        if es_unidad(self.ruta):
+            self.sub.setText(f"{servicio}{extra} · " + _("Unidad {letra}").format(letra=letra_unidad(self.ruta)))
+            self.accion_modo.setText(_("Mostrar como carpeta en «Nube»"))
+        else:
+            self.sub.setText(f"{servicio}{extra} · {BASE.name} › {self.ruta.name}")
+            self.accion_modo.setText(_("Mostrar como unidad en «Este equipo»"))
         self.accion_sesion.setVisible(self.es_icloud)
         if self.ocupada:
             return
@@ -3206,8 +3419,11 @@ class Ventana(QWidget):
         pie = QHBoxLayout()
         self.aviso = etiqueta("", None)
         pie.addWidget(self.aviso, 1)
-        pie.addWidget(boton(_("Abrir carpeta {base}").format(base=BASE.name), None,
-                            lambda: self.abrir(BASE)))
+        if WINDOWS:
+            pie.addWidget(boton("Abrir «Este equipo»", None, self.abrir_este_equipo))
+        else:
+            pie.addWidget(boton(_("Abrir carpeta {base}").format(base=BASE.name), None,
+                                lambda: self.abrir(BASE)))
         pie.addWidget(boton("ⓘ", "redondo", lambda: AcercaDe(self).exec()))
         lay.addLayout(pie)
         creditos = etiqueta(CREDITOS, "pequeno")
@@ -3247,7 +3463,7 @@ class Ventana(QWidget):
             ultimo = self.espacio_pedido.get(r, 0)
             if dump[r].get("type") == "iclouddrive":
                 ultimo = max(ultimo, self.cache_espacio.get(r, [0, 0, 0])[2])
-            if time.time() - ultimo > cada and os.path.abspath(str(tj.ruta)) in montajes:
+            if time.time() - ultimo > cada and clave_ruta(tj.ruta) in montajes:
                 self.espacio_pedido[r] = time.time()
                 self.lz.lanzar(tarea_espacio, [r, dump[r]], self._espacio)
         self.vacio.setVisible(not dump)
@@ -3306,8 +3522,15 @@ class Ventana(QWidget):
             self.tarjetas[remoto].mostrar_espacio(usado, total)
 
     def abrir(self, ruta):
-        BASE.mkdir(parents=True, exist_ok=True)
+        if not es_unidad(ruta):
+            BASE.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(ruta)))
+
+    def abrir_este_equipo(self):
+        try:
+            subprocess.Popen(["explorer.exe", "shell:MyComputerFolder"], close_fds=True)
+        except OSError:
+            pass
 
     def mensaje(self, ok, texto, detalle=None):
         if ok:
@@ -3348,6 +3571,11 @@ class Ventana(QWidget):
         elif tj.modo == "montar":
             tj.ocupado("Conectando…")
             self.lz.lanzar(tarea_montar, [tj.remoto], lambda r: self.tras_tarea(tj, r))
+
+    def cambiar_modo(self, tj):
+        nuevo = "carpeta" if es_unidad(tj.ruta) else "unidad"
+        tj.ocupado("Cambiando…")
+        self.lz.lanzar(tarea_cambiar_modo, [tj.remoto, nuevo], lambda r: self.tras_tarea(tj, r))
 
     def renombrar(self, tj):
         nuevo, ok = pedir_texto(self, "Cambiar nombre",
@@ -3681,9 +3909,7 @@ TRADUCCIONES["en"] = {
     "¡Sesión iniciada!": "Signed in!",
     "«{nombre}» vuelve a funcionar. Dentro de 30 días Apple te lo volverá a pedir.": "“{nombre}” works again. Apple will ask again in 30 days.",
     "¡iCloud Fotos está listo!": "iCloud Photos is ready!",
-    "Tus fotos están en la carpeta <b>{base} › {carpeta}</b>, ordenadas por álbumes (todas juntas están en «All Photos»).<br><br>La primera vez puede tardar unos minutos en mostrar todas las fotos si tienes muchas. Las siguientes veces irá rápido.": "Your photos are in the <b>{base} › {carpeta}</b> folder, organized by albums (all of them together are in “All Photos”).<br><br>The first time it may take a few minutes to show all your photos if you have many. After that it will be fast.",
     "¡«{nombre}» está lista!": "“{nombre}” is ready!",
-    "Tus archivos ya aparecen en la carpeta <b>{base} › {carpeta}</b>.<br>Se abrirá sola cada vez que enciendas el ordenador.<br><br>Consejo: también la tienes en el panel izquierdo del explorador de archivos, en «Mis nubes».": "Your files now appear in the <b>{base} › {carpeta}</b> folder.<br>It will open on its own every time you turn on your computer.<br><br>Tip: you also have it in the left panel of the file manager, under “My Clouds”.",
     "Volver a iniciar sesión": "Sign in again",
     "Acerca de Mis nubes": "About My Clouds",
     "Versión {v}": "Version {v}",
@@ -3751,6 +3977,27 @@ TRADUCCIONES["en"] = {
     "No se pudo descargar rclone. Comprueba tu internet e inténtalo de nuevo.": "Could not download rclone. Check your internet connection and try again.",
     "Descargando e instalando WinFsp… Si Windows pregunta, pulsa «Sí».": "Downloading and installing WinFsp… If Windows asks, press \"Yes\".",
     "No se pudo instalar WinFsp. Puedes instalarlo tú desde winfsp.dev y volver a abrir Mis nubes.": "Could not install WinFsp. You can install it yourself from winfsp.dev and open My Clouds again.",
+    "la unidad <b>{letra}</b> de «Este equipo»": "drive <b>{letra}</b> in \"This PC\"",
+    "la carpeta <b>{base} › {carpeta}</b>": "the <b>{base} › {carpeta}</b> folder",
+    "Se cambió el modo, pero no se pudo abrir la nube. Pulsa «Reintentar».": "The mode was changed, but the cloud could not be opened. Press \"Retry\".",
+    "Ahora está en {donde}.": "It is now in {donde}.",
+    "Aparecerá en «Este equipo» como la unidad <b>{letra}:</b> «{nombre}»": "It will appear in \"This PC\" as drive <b>{letra}:</b> \"{nombre}\"",
+    "<b>¿Cómo quieres verla?</b>": "<b>How do you want to see it?</b>",
+    "Como unidad en «Este equipo»": "As a drive in \"This PC\"",
+    "Un disco más, con su letra (G:). Recomendado.": "One more disk, with its own letter (G:). Recommended.",
+    "Como carpeta dentro de «Nube»": "As a folder inside \"Clouds\"",
+    "En tu carpeta personal › Nube.": "In your personal folder › Clouds.",
+    "Tus fotos están en {donde}, ordenadas por álbumes (todas juntas están en «All Photos»).<br><br>La primera vez puede tardar unos minutos en mostrar todas las fotos si tienes muchas. Las siguientes veces irá rápido.": "Your photos are in {donde}, sorted by album (all of them together are in \"All Photos\").<br><br>The first time it may take a few minutes to show all the photos if you have many. Next times it will be fast.",
+    "Consejo: puedes cambiarla a carpeta cuando quieras desde el botón ⋯ de su tarjeta.": "Tip: you can switch it to a folder at any time from the ⋯ button on its card.",
+    "Consejo: también la tienes en el panel izquierdo del Explorador, en «Acceso rápido».": "Tip: you also have it in the left panel of File Explorer, under \"Quick access\".",
+    "Consejo: también la tienes en el panel izquierdo del explorador de archivos, en «Mis nubes».": "Tip: you also have it in the left panel of the file manager, under \"My Clouds\".",
+    "Tus archivos ya aparecen en {donde}.<br>Se abrirá sola cada vez que enciendas el ordenador.": "Your files now appear in {donde}.<br>It will open on its own every time you turn on your computer.",
+    "Unidad {letra}": "Drive {letra}",
+    "Mostrar como carpeta en «Nube»": "Show as a folder in \"Clouds\"",
+    "Mostrar como unidad en «Este equipo»": "Show as a drive in \"This PC\"",
+    "Abrir «Este equipo»": "Open \"This PC\"",
+    "Cambiando…": "Changing…",
+    "No se pudo preparar la carpeta en este ordenador.": "The folder could not be set up on this computer.",
 }
 
 

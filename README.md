@@ -29,7 +29,7 @@ Para personas que **no saben usar la terminal**. Todo se hace con ventanas, en e
 2. Haz **doble clic** sobre él. La primera vez descarga dos programas libres que necesita: **rclone** y **WinFsp** (unos 30 MB). Windows pedirá permiso para instalar WinFsp: pulsa **«Sí»**.
 3. Pulsa **«Añadir nube»** y sigue los pasos.
 
-Después de la primera vez, **Mis nubes** aparece en el menú Inicio, y la carpeta `Nube` queda anclada en el panel izquierdo del Explorador de archivos.
+Cada nube puede verse **como una unidad más en «Este equipo»** (con su letra, por ejemplo `G:`, lo recomendado) o **como una carpeta** dentro de `Nube`; se elige al añadirla y se puede cambiar después desde el botón ⋯ de su tarjeta. Después de la primera vez, **Mis nubes** aparece en el menú Inicio.
 
 > **Requisitos:** Windows 10 u 11 (64 bits). Si Windows SmartScreen avisa de que el archivo no es conocido, pulsa «Más información» › «Ejecutar de todas formas» (el programa no está firmado con un certificado de pago).
 
@@ -102,7 +102,7 @@ python3 src/mis_nubes.py            # o ejecuta el programa directamente (Linux 
 
 Creado por **Jose Callejas** ([@Callejasto](https://github.com/Callejasto)) y **Claude** (Anthropic).
 
-Funciona gracias a [rclone](https://rclone.org) (licencia MIT). Los iconos de los servicios provienen, en Linux, del tema libre [Papirus](https://github.com/PapirusDevelopmentTeam/papirus-icon-theme) (GPL-3.0), instalado desde los repositorios del sistema (en Windows se usan iconos de color con la inicial); en Windows las nubes se muestran como carpetas gracias a [WinFsp](https://winfsp.dev) (GPLv3 con excepción para software libre); las marcas y logotipos pertenecen a sus respectivos dueños. Los iconos de Proton Drive, Koofr, Amazon S3 y Backblaze B2 de la carpeta [`icons`](icons) son diseños originales de este proyecto, no sus logotipos oficiales. Este proyecto no está afiliado a Google, Microsoft, Apple ni a ningún otro servicio.
+Funciona gracias a [rclone](https://rclone.org) (licencia MIT). Los iconos de los servicios provienen, en Linux, del tema libre [Papirus](https://github.com/PapirusDevelopmentTeam/papirus-icon-theme) (GPL-3.0), instalado desde los repositorios del sistema (en Windows, y en Linux sin Papirus, se usan las copias incluidas en [`icons/papirus`](icons/papirus), con su licencia); en Windows las nubes se muestran como carpetas gracias a [WinFsp](https://winfsp.dev) (GPLv3 con excepción para software libre); las marcas y logotipos pertenecen a sus respectivos dueños. Los iconos de Proton Drive, Koofr, Amazon S3 y Backblaze B2 de la carpeta [`icons`](icons) son diseños originales de este proyecto, no sus logotipos oficiales. Este proyecto no está afiliado a Google, Microsoft, Apple ni a ningún otro servicio.
 
 ## Licencia
 

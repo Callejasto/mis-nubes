@@ -88,7 +88,11 @@ jobs:
         with:
           tag_name: ${{ inputs.etiqueta || github.ref_name }}
           target_commitish: ${{ github.sha }}
-          files: dist/Mis nubes.exe
+          # El lanzador de Linux (dist/Mis nubes.desktop) va en el repositorio: se adjunta también,
+          # así una sola release sirve para Linux y Windows.
+          files: |
+            dist/Mis nubes.exe
+            dist/Mis nubes.desktop
           fail_on_unmatched_files: true
           # v1.3-windows, v1.4-beta…: versión de prueba (no la ofrece el actualizador de Linux)
           prerelease: ${{ contains(inputs.etiqueta || github.ref_name, '-') }}

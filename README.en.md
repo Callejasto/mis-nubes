@@ -29,7 +29,7 @@ For people who **don't know how to use the terminal**. Everything happens in win
 2. **Double-click** it. The first time it downloads two free programs it needs: **rclone** and **WinFsp** (about 30 MB). Windows will ask for permission to install WinFsp: press **"Yes"**.
 3. Press **"Add cloud"** and follow the steps.
 
-After the first time, **My Clouds** appears in the Start menu, and the `Clouds` folder is pinned to the left panel of File Explorer.
+Each cloud can be shown **as a drive in "This PC"** (with its own letter, e.g. `G:`, recommended) or **as a folder** inside `Clouds`; you choose when adding it and can change it later from the ⋯ button on its card. After the first time, **My Clouds** appears in the Start menu.
 
 > **Requirements:** Windows 10 or 11 (64-bit). If Windows SmartScreen warns that the file is unknown, press "More info" › "Run anyway" (the program is not signed with a paid certificate).
 
@@ -94,7 +94,7 @@ Apple doesn't allow uploading or deleting photos outside its own apps. Use your 
 
 Created by **Jose Callejas** ([@Callejasto](https://github.com/Callejasto)) and **Claude** (Anthropic).
 
-Powered by [rclone](https://rclone.org) (MIT license). On Linux, service icons come from the free [Papirus](https://github.com/PapirusDevelopmentTeam/papirus-icon-theme) theme (GPL-3.0), installed from your system repositories (on Windows, colored initial tiles are used instead); on Windows, clouds appear as folders thanks to [WinFsp](https://winfsp.dev) (GPLv3 with a free-software exception); brands and logos belong to their respective owners. The Proton Drive, Koofr, Amazon S3 and Backblaze B2 icons in the [`icons`](icons) folder are original designs made for this project, not their official logos. This project is not affiliated with Google, Microsoft, Apple or any other service.
+Powered by [rclone](https://rclone.org) (MIT license). On Linux, service icons come from the free [Papirus](https://github.com/PapirusDevelopmentTeam/papirus-icon-theme) theme (GPL-3.0), installed from your system repositories (on Windows, and on Linux without Papirus, the copies bundled in [`icons/papirus`](icons/papirus) are used, with their license); on Windows, clouds appear as folders thanks to [WinFsp](https://winfsp.dev) (GPLv3 with a free-software exception); brands and logos belong to their respective owners. The Proton Drive, Koofr, Amazon S3 and Backblaze B2 icons in the [`icons`](icons) folder are original designs made for this project, not their official logos. This project is not affiliated with Google, Microsoft, Apple or any other service.
 
 ## License
 

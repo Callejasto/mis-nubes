@@ -34,9 +34,10 @@ jobs:
         run: |
           import re, sys, os
           v = re.search(r'^VERSION = "([^"]+)"', open("src/mis_nubes.py", encoding="utf-8").read(), re.M).group(1)
-          tag = os.environ["GITHUB_REF_NAME"].lstrip("vV")
+          tag = os.environ["GITHUB_REF_NAME"]
           print(f"VERSION = {v}, etiqueta = {tag}")
-          sys.exit(0 if v == tag else "La etiqueta no coincide con VERSION en src/mis_nubes.py")
+          # Se comparan solo los números: v1.4 == 1.4; v1.3-windows (prueba) == 1.3
+          sys.exit(0 if re.findall(r"\d+", v) == re.findall(r"\d+", tag) else "La etiqueta no coincide con VERSION en src/mis_nubes.py")
 
       - name: Comprobar el código con el Python de Windows
         shell: pwsh
@@ -80,3 +81,5 @@ jobs:
         with:
           files: dist/Mis nubes.exe
           fail_on_unmatched_files: true
+          # v1.3-windows, v1.4-beta…: versión de prueba (no la ofrece el actualizador de Linux)
+          prerelease: ${{ contains(github.ref_name, '-') }}

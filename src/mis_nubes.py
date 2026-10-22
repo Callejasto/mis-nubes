@@ -554,20 +554,33 @@ TAREA_XML = """<?xml version="1.0" encoding="UTF-16"?>
 
 
 # ================================================================ utilidades
-def run(cmd, timeout=None, entrada=None):
+def run(cmd, timeout=None, entrada=None, codificacion="utf-8"):
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
                           input=entrada, stdin=None if entrada is not None else subprocess.DEVNULL,
-                          encoding="utf-8", errors="replace", **SIN_VENTANA)
+                          encoding=codificacion, errors="replace", **SIN_VENTANA)
+
+
+# Las herramientas de Windows (schtasks, PowerShell) escriben en la página de códigos OEM
+try:
+    import codecs
+    codecs.lookup("oem")
+    OEM = "oem"
+except LookupError:
+    OEM = "utf-8"
+ERROR_SISTEMA = {"texto": ""}      # último fallo al crear/arrancar la tarea (para mostrarlo)
 
 
 def powershell(orden, timeout=60):
     """Ejecuta una orden de PowerShell (solo Windows)."""
     return run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-                "-Command", orden], timeout=timeout)
+                "-Command", orden], timeout=timeout, codificacion=OEM)
 
 
 def schtasks(*args, timeout=60):
-    return run(["schtasks", *args], timeout=timeout)
+    r = run(["schtasks", *args], timeout=timeout, codificacion=OEM)
+    if r.returncode != 0 and args[0] in ("/Create", "/Run") and not ERROR_SISTEMA["texto"]:
+        ERROR_SISTEMA["texto"] = f"schtasks {args[0]}: " + (r.stderr or r.stdout).strip()[:400]
+    return r
 
 
 def usuario_windows():
@@ -590,9 +603,18 @@ def slug(texto):
     return t or "nube"
 
 
+RESERVADOS_WINDOWS = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)),
+                      *(f"lpt{i}" for i in range(1, 10))}
+
+
 def limpiar_nombre(nombre):
-    n = re.sub(r'[\x00-\x1f/\\"$%`]', "", nombre).strip().strip(".")
-    return n[:60] or "Nube"
+    """Nombre de carpeta válido en Linux y en Windows (sin caracteres prohibidos ni nombres
+    reservados como CON o NUL)."""
+    n = re.sub(r'[\x00-\x1f/\\"$%`<>:|?*]', "", nombre).strip().strip(".").rstrip(" .")
+    n = n[:60].rstrip(" .")
+    if n.split(".")[0].lower() in RESERVADOS_WINDOWS:
+        n = "Nube " + n
+    return n or "Nube"
 
 
 def q(texto):
@@ -683,6 +705,10 @@ def puntos_de_montaje():
                 except OSError:
                     continue
                 if atributos & getattr(os, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400):
+                    try:
+                        os.stat(hijo.path)      # si rclone no está detrás, falla: enlace muerto
+                    except OSError:
+                        continue
                     puntos.add(os.path.abspath(hijo.path))
         except OSError:
             pass
@@ -705,15 +731,33 @@ def montado(ruta):
     return os.path.abspath(str(ruta)) in puntos_de_montaje()
 
 
+def es_enlace_muerto(ruta):
+    """Windows: punto de reanálisis (WinFsp) que ya no tiene a rclone detrás."""
+    try:
+        atributos = getattr(os.lstat(ruta), "st_file_attributes", 0)
+    except OSError:
+        return False
+    if not atributos & getattr(os, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400):
+        return False
+    try:
+        os.stat(ruta)
+        return False
+    except OSError:
+        return True
+
+
 def argumentos_montaje(remoto, datos):
     ruta = carpeta_de(remoto, datos)
     extra = MONTAJE_FOTOS if datos.get("service") == "photos" else []
     volname = titulo_de(remoto, datos).replace("\n", " ")
     if WINDOWS:
-        volname = volname[:32]      # límite de Windows para la etiqueta de un volumen
+        # límite de 32 caracteres; el Programador de tareas expandiría %VARIABLES%
+        volname = volname.replace("%", "")[:32]
     args = ["mount", f"{remoto}:", str(ruta), *MONTAJE_OPCIONES, "--volname", volname, *extra]
     if WINDOWS:
-        args += ["--no-console"]
+        registro = APP_DIR / "registros" / (unidad_de(remoto)[:-4] + ".log")
+        registro.parent.mkdir(parents=True, exist_ok=True)
+        args += ["--no-console", "--log-file", str(registro)]
     return args
 
 
@@ -729,6 +773,7 @@ def escribir_unidad(remoto, datos):
             titulo=xml_escape(titulo.replace("\n", " ")), nombre=xml_escape(tarea_de(remoto)[10:]),
             usuario=xml_escape(usuario_windows()), programa=xml_escape(programa),
             argumentos=xml_escape("mount " + " ".join(q_win(a) for a in args))), encoding="utf-16")
+        ERROR_SISTEMA["texto"] = ""
         schtasks("/Create", "/F", "/TN", tarea_de(remoto), "/XML", str(archivo))
         return
     extra = (" \\\n    --read-only --vfs-refresh --attr-timeout 1m"
@@ -758,6 +803,9 @@ def apartar_carpeta(ruta):
     Deja la ruta lista: vacía (Linux) o inexistente (Windows, donde WinFsp la crea él)."""
     BASE.mkdir(parents=True, exist_ok=True)
     if montado(ruta):      # sigue abierta: no se toca (sería la nube, no una carpeta normal)
+        return
+    if WINDOWS and es_enlace_muerto(ruta):
+        os.rmdir(ruta)      # resto de una nube que se quedó a medias (apagón, cuelgue): fuera
         return
     if ruta.is_dir() and any(ruta.iterdir()):
         n = 1
@@ -907,10 +955,11 @@ def version_instalada_windows():
 def crear_acceso_directo(destino, programa, icono=None):
     """Acceso directo (.lnk) de Windows."""
     icono = icono or programa
+    ps = lambda t: str(t).replace("'", "''")      # comillas simples de PowerShell  # noqa: E731
     powershell(
-        f"$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{destino}'); "
-        f"$s.TargetPath = '{programa}'; $s.WorkingDirectory = '{Path(programa).parent}'; "
-        f"$s.IconLocation = '{icono},0'; $s.Description = 'Mis nubes'; $s.Save()")
+        f"$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{ps(destino)}'); "
+        f"$s.TargetPath = '{ps(programa)}'; $s.WorkingDirectory = '{ps(Path(programa).parent)}'; "
+        f"$s.IconLocation = '{ps(icono)},0'; $s.Description = 'Mis nubes'; $s.Save()")
 
 
 def preparar_windows():
@@ -920,11 +969,13 @@ def preparar_windows():
     try:
         APP_DIR.mkdir(parents=True, exist_ok=True)
         viejo = EXE_INSTALADO.with_suffix(".exe.viejo")
-        if viejo.exists():
+        for v in APP_DIR.glob("Mis nubes.exe.viejo*"):
             try:
-                viejo.unlink()      # la versión anterior, tras actualizar; puede seguir en uso
+                v.unlink()          # versiones anteriores, tras actualizar; pueden seguir en uso
             except OSError:
                 pass
+        if viejo.exists():
+            viejo = EXE_INSTALADO.with_suffix(f".exe.viejo{int(time.time())}")
         origen = Path(sys.executable).resolve()
         if origen != EXE_INSTALADO.resolve() and version_instalada_windows() <= version_tupla(VERSION):
             tmp = EXE_INSTALADO.with_suffix(".exe.nuevo")
@@ -1222,6 +1273,8 @@ def tarea_verificar_y_montar(remoto):
 def tarea_montar(remoto):
     if montar(remoto):
         return (True, "Carpeta lista.")
+    if ERROR_SISTEMA["texto"]:
+        return (False, "No se pudo preparar la carpeta en este ordenador.", ERROR_SISTEMA["texto"])
     if config_dump().get(remoto, {}).get("type") == "iclouddrive":
         return (False, "No se pudo abrir la carpeta. Comprueba tu internet. Si sigue sin funcionar, "
                        "pulsa el botón ⋯ y elige «Volver a iniciar sesión»: Apple lo pide cada 30 días.")
@@ -1509,10 +1562,13 @@ def instalar_winfsp(aviso_progreso):
         msi = Path(tempfile.gettempdir()) / "winfsp-mis-nubes.msi"
         msi.write_bytes(datos)
         # Instalación con permiso de administrador (ventana de Windows «¿Permitir…?»)
-        r = powershell(f"$p = Start-Process msiexec.exe -ArgumentList '/i','\"{msi}\"','/passive',"
-                       f"'/norestart' -Verb RunAs -Wait -PassThru; exit $p.ExitCode", timeout=600)
+        r = powershell(f"try {{ $p = Start-Process msiexec.exe -ArgumentList '/i','\"{msi}\"',"
+                       f"'/passive','/norestart' -Verb RunAs -Wait -PassThru; exit $p.ExitCode }} "
+                       f"catch {{ exit 1223 }}", timeout=600)   # 1223: el usuario dijo «No»
         aviso_progreso(100)
         if not winfsp_instalado():
+            if r.returncode == 1223:
+                return (False, "no diste permiso de administrador para instalar WinFsp")
             return (False, f"msiexec terminó con código {r.returncode}: {r.stderr.strip()[:300]}")
         return (True, "")
     except Exception as e:  # noqa: BLE001
@@ -2686,7 +2742,8 @@ class Asistente(QDialog):
         elif res[0] == "montar":
             self._final(False, "Casi listo",
                         "Tu cuenta quedó guardada, pero no se pudo abrir la carpeta. Cierra esta "
-                        "ventana y pulsa «Reintentar» en la tarjeta de esta nube.")
+                        "ventana y pulsa «Reintentar» en la tarjeta de esta nube.",
+                        ERROR_SISTEMA["texto"] or None)
             self.resultado = self.remoto
             self.btn_sig.setText(_("Cerrar"))
             self.ok_final = True
@@ -3252,13 +3309,13 @@ class Ventana(QWidget):
         BASE.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(ruta)))
 
-    def mensaje(self, ok, texto):
+    def mensaje(self, ok, texto, detalle=None):
         if ok:
             self.aviso.setText(f"<span style='color:{T['verde']}'>✓ {_(texto)}</span>")
             QTimer.singleShot(8000, lambda: self.aviso.setText(""))
         else:
             self.aviso.setText("")
-            avisar(self, texto)
+            avisar(self, texto, detalle or None)
 
     def tras_tarea(self, tj, res):
         tj.libre()

@@ -1,0 +1,63 @@
+# Compila «Mis nubes.exe» en Windows y lo adjunta a la versión (release) correspondiente.
+#
+# - Al crear una etiqueta vX.Y (git tag v1.4 && git push --tags): compila y sube el .exe a la
+#   release de esa etiqueta (la crea si no existe). El autoactualizador de Windows lo encontrará.
+# - A mano (Actions › Windows › Run workflow): compila y deja el .exe como artefacto para probar.
+name: Windows
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar PyQt6 y PyInstaller
+        run: pip install PyQt6 pyinstaller
+
+      - name: Comprobar que la etiqueta coincide con VERSION
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: python
+        run: |
+          import re, sys, os
+          v = re.search(r'^VERSION = "([^"]+)"', open("src/mis_nubes.py", encoding="utf-8").read(), re.M).group(1)
+          tag = os.environ["GITHUB_REF_NAME"].lstrip("vV")
+          print(f"VERSION = {v}, etiqueta = {tag}")
+          sys.exit(0 if v == tag else "La etiqueta no coincide con VERSION en src/mis_nubes.py")
+
+      - name: Compilar
+        run: python construir-windows.py
+
+      - name: Comprobar que arranca
+        shell: pwsh
+        run: |
+          $exe = "dist\Mis nubes.exe"
+          if (-not (Test-Path $exe)) { throw "No se generó $exe" }
+          "{0:N1} MB" -f ((Get-Item $exe).Length / 1MB)
+          # --exportar-idioma termina solo, sin abrir ventana: sirve para ver que el .exe arranca
+          $p = Start-Process -FilePath $exe -ArgumentList "--exportar-idioma", "en" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "El .exe terminó con código $($p.ExitCode)" }
+
+      - name: Guardar como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mis-nubes-windows
+          path: dist/Mis nubes.exe
+
+      - name: Adjuntar a la release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Mis nubes.exe
+          fail_on_unmatched_files: true

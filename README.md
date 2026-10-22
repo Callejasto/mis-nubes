@@ -5,7 +5,7 @@
 <h1 align="center">Mis nubes</h1>
 
 <p align="center">
-  Tus nubes como carpetas normales de tu ordenador, en Linux.<br>
+  Tus nubes como carpetas normales de tu ordenador, en Linux y en Windows.<br>
   Google Drive, OneDrive, iCloud Drive, iCloud Fotos, Dropbox, MEGA, Nextcloud y 60 servicios más.
 </p>
 
@@ -22,6 +22,18 @@
 Para personas que **no saben usar la terminal**. Todo se hace con ventanas, en español y con explicaciones paso a paso: eliges tu nube, le pones un nombre, inicias sesión y listo. Tus archivos aparecen en la carpeta `Nube` y se abren solos cada vez que enciendes el ordenador, igual que en Windows o en Mac.
 
 ## Instalación
+
+### En Windows
+
+1. Descarga **`Mis nubes.exe`** desde la sección [**Releases**](../../releases/latest).
+2. Haz **doble clic** sobre él. La primera vez descarga dos programas libres que necesita: **rclone** y **WinFsp** (unos 30 MB). Windows pedirá permiso para instalar WinFsp: pulsa **«Sí»**.
+3. Pulsa **«Añadir nube»** y sigue los pasos.
+
+Después de la primera vez, **Mis nubes** aparece en el menú Inicio, y la carpeta `Nube` queda anclada en el panel izquierdo del Explorador de archivos.
+
+> **Requisitos:** Windows 10 u 11 (64 bits). Si Windows SmartScreen avisa de que el archivo no es conocido, pulsa «Más información» › «Ejecutar de todas formas» (el programa no está firmado con un certificado de pago).
+
+### En Linux
 
 1. Descarga el archivo **`Mis nubes.desktop`** desde la sección [**Releases**](../../releases/latest) (o desde la carpeta [`dist`](dist)).
 2. Haz **doble clic** sobre él. La primera vez, el sistema te preguntará si confías en el archivo: elige **«Ejecutar»** o **«Continuar»**.
@@ -75,19 +87,22 @@ Apple no permite subir ni borrar fotos desde fuera de sus aplicaciones. Para eso
 
 - El programa completo está en [`src/mis_nubes.py`](src/mis_nubes.py) (Python 3 + PyQt6).
 - [`construir.sh`](construir.sh) genera `dist/Mis nubes.desktop`: un lanzador de un solo archivo que lleva el programa dentro, comprimido.
-- Cada nube es un servicio de usuario de systemd (`~/.config/systemd/user/mis-nubes-*.service`) que ejecuta `rclone mount`.
-- **Publicar una versión:** cambia `VERSION` en el código, ejecuta `./construir.sh` y crea una *release* con la etiqueta `vX.Y` (la misma versión) adjuntando `dist/Mis nubes.desktop`. Las copias instaladas la detectan, comprueban su huella SHA-256 y se actualizan.
+- Es el mismo archivo para Linux y Windows: lo que cambia entre ambos está marcado con `WINDOWS`.
+- Cada nube es, en Linux, un servicio de usuario de systemd (`~/.config/systemd/user/mis-nubes-*.service`) y, en Windows, una tarea del Programador de tareas (`Mis nubes\…`, definida en `%LOCALAPPDATA%\mis-nubes\tareas\*.xml`). Ambas ejecutan `rclone mount` al iniciar sesión; en Windows a través de [WinFsp](https://winfsp.dev).
+- [`construir-windows.py`](construir-windows.py) genera `dist/Mis nubes.exe` con PyInstaller (en Windows: `pip install PyQt6 pyinstaller` y `python construir-windows.py`). El flujo [`.github/workflows/windows.yml`](.github/workflows/windows.yml) lo hace solo en GitHub.
+- **Publicar una versión:** cambia `VERSION` en el código, ejecuta `./construir.sh` y crea una *release* con la etiqueta `vX.Y` (la misma versión) adjuntando `dist/Mis nubes.desktop`. Al subir la etiqueta, GitHub Actions compila `Mis nubes.exe` y lo adjunta a esa misma release. Las copias instaladas (Linux y Windows) la detectan, comprueban su huella SHA-256 y se actualizan.
 
 ```bash
-./construir.sh                      # regenera dist/Mis nubes.desktop
-python3 src/mis_nubes.py            # o ejecuta el programa directamente
+./construir.sh                      # regenera dist/Mis nubes.desktop (Linux)
+python construir-windows.py         # regenera dist/Mis nubes.exe (en Windows)
+python3 src/mis_nubes.py            # o ejecuta el programa directamente (Linux o Windows)
 ```
 
 ## Créditos
 
 Creado por **Jose Callejas** ([@Callejasto](https://github.com/Callejasto)) y **Claude** (Anthropic).
 
-Funciona gracias a [rclone](https://rclone.org) (licencia MIT). Los iconos de los servicios provienen del tema libre [Papirus](https://github.com/PapirusDevelopmentTeam/papirus-icon-theme) (GPL-3.0), instalado desde los repositorios del sistema; las marcas y logotipos pertenecen a sus respectivos dueños. Los iconos de Proton Drive, Koofr, Amazon S3 y Backblaze B2 de la carpeta [`icons`](icons) son diseños originales de este proyecto, no sus logotipos oficiales. Este proyecto no está afiliado a Google, Microsoft, Apple ni a ningún otro servicio.
+Funciona gracias a [rclone](https://rclone.org) (licencia MIT). Los iconos de los servicios provienen, en Linux, del tema libre [Papirus](https://github.com/PapirusDevelopmentTeam/papirus-icon-theme) (GPL-3.0), instalado desde los repositorios del sistema (en Windows se usan iconos de color con la inicial); en Windows las nubes se muestran como carpetas gracias a [WinFsp](https://winfsp.dev) (GPLv3 con excepción para software libre); las marcas y logotipos pertenecen a sus respectivos dueños. Los iconos de Proton Drive, Koofr, Amazon S3 y Backblaze B2 de la carpeta [`icons`](icons) son diseños originales de este proyecto, no sus logotipos oficiales. Este proyecto no está afiliado a Google, Microsoft, Apple ni a ningún otro servicio.
 
 ## Licencia
 

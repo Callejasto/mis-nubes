@@ -6,6 +6,7 @@ iniciar sesión como carpeta en ~/Nube/<nombre que elijas>."""
 import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -29,13 +30,33 @@ from PyQt6.QtWidgets import (
 
 APP = "Mis nubes"
 
+# ================================================================ sistema operativo
+# El programa funciona en Linux (systemd + FUSE) y en Windows (Programador de tareas + WinFsp).
+# Todo lo que cambia entre uno y otro está marcado con WINDOWS.
+WINDOWS = sys.platform == "win32"
+CONGELADO = bool(getattr(sys, "frozen", False))        # ejecutable hecho con PyInstaller
+HOME = Path.home()
+if WINDOWS:
+    CONFIG_DIR = Path(os.environ.get("APPDATA") or HOME / "AppData/Roaming") / "mis-nubes"
+    APP_DIR = Path(os.environ.get("LOCALAPPDATA") or HOME / "AppData/Local") / "mis-nubes"
+    CACHE_DIR = APP_DIR / "cache"
+    UNIT_DIR = APP_DIR / "tareas"          # una tarea programada (XML) por nube
+    # Evita que cada orden a rclone/schtasks abra una ventana negra de consola
+    SIN_VENTANA = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+else:
+    CONFIG_DIR = HOME / ".config/mis-nubes"
+    APP_DIR = HOME / ".local/share/mis-nubes"
+    CACHE_DIR = HOME / ".cache/mis-nubes"
+    UNIT_DIR = HOME / ".config/systemd/user"   # una unidad de systemd por nube
+    SIN_VENTANA = {}
+
 
 # ================================================================ idiomas
 # El programa está escrito en español y cada texto visible pasa por _().
 # Cada idioma es un catálogo «texto en español» → «texto traducido».
 # Para añadir un idioma: copia idiomas/en.json, traduce los valores y guárdalo
 # como idiomas/<código>.json (por ejemplo fr.json). Ver idiomas/LEEME.md.
-AJUSTES = Path.home() / ".config/mis-nubes/ajustes.json"
+AJUSTES = CONFIG_DIR / "ajustes.json"
 TRADUCCIONES = {}        # catálogos incluidos; se rellenan al final del archivo
 CATALOGO = {}
 IDIOMA = "es"
@@ -64,8 +85,25 @@ def guardar_ajuste(clave, valor):
 
 def carpetas_idiomas():
     aqui = Path(__file__).resolve().parent
-    return [aqui / "idiomas", aqui.parent / "idiomas",
-            Path.home() / ".local/share/mis-nubes/idiomas"]
+    carpetas = [aqui / "idiomas", aqui.parent / "idiomas", APP_DIR / "idiomas"]
+    if CONGELADO:   # dentro del ejecutable (PyInstaller) van en la carpeta temporal _MEIPASS
+        carpetas.insert(0, Path(getattr(sys, "_MEIPASS", aqui)) / "idiomas")
+    return carpetas
+
+
+def idioma_del_sistema():
+    """Código de idioma del sistema («es», «en»…)."""
+    if WINDOWS:
+        try:
+            import ctypes
+            langid = ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3FF
+            return {0x0A: "es", 0x09: "en", 0x0C: "fr", 0x16: "pt", 0x10: "it", 0x07: "de",
+                    0x03: "ca"}.get(langid, "en")
+        except (AttributeError, OSError):
+            return "es"
+    entorno = (os.environ.get("LANGUAGE") or os.environ.get("LC_ALL")
+               or os.environ.get("LC_MESSAGES") or os.environ.get("LANG") or "es")
+    return entorno.split(":")[0].split(".")[0].split("_")[0].lower() or "es"
 
 
 def catalogo(codigo):
@@ -101,9 +139,7 @@ def cargar_idioma():
     global IDIOMA, CATALOGO
     elegido = leer_ajustes().get("idioma", "auto")
     if elegido == "auto":
-        entorno = (os.environ.get("LANGUAGE") or os.environ.get("LC_ALL")
-                   or os.environ.get("LC_MESSAGES") or os.environ.get("LANG") or "es")
-        elegido = entorno.split(":")[0].split(".")[0].split("_")[0].lower() or "es"
+        elegido = idioma_del_sistema()
     if elegido == "es":
         IDIOMA, CATALOGO = "es", {}
         return
@@ -124,17 +160,37 @@ def elegir_carpeta_base():
     else:
         BASE = HOME / _("Nube")
     guardar_ajuste("carpeta", str(BASE))
-HOME = Path.home()
 BASE = HOME / "Nube"
-UNIT_DIR = HOME / ".config/systemd/user"
-APP_DIR = HOME / ".local/share/mis-nubes"
 
-# rclone: el del sistema o, si es antiguo (sin iCloud Fotos), uno propio descargado
+# rclone: el del sistema o, si falta o es antiguo (sin iCloud Fotos), uno propio descargado
 RCLONE_VER = "1.75.1"
-RCLONE_PROPIO = APP_DIR / "bin" / f"rclone-{RCLONE_VER}"
+_ARQ = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(
+    platform.machine().lower(), "amd64")
+_SO = "windows" if WINDOWS else "linux"
+RCLONE_PROPIO = APP_DIR / "bin" / (f"rclone-{RCLONE_VER}" + (".exe" if WINDOWS else ""))
 RCLONE_URL = (f"https://github.com/rclone/rclone/releases/download/v{RCLONE_VER}/"
-              f"rclone-v{RCLONE_VER}-linux-amd64.zip")
+              f"rclone-v{RCLONE_VER}-{_SO}-{_ARQ}.zip")
 RCLONE = "rclone"
+
+# WinFsp: lo que permite a rclone mostrar una nube como carpeta en Windows (como FUSE en Linux)
+WINFSP_URL_API = "https://api.github.com/repos/winfsp/winfsp/releases/latest"
+WINFSP_DESCARGAS = "https://github.com/winfsp/winfsp/releases/download/"
+
+
+def winfsp_instalado():
+    if not WINDOWS:
+        return True
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\WinFsp") as k:
+            carpeta = Path(winreg.QueryValueEx(k, "InstallDir")[0])
+        return (carpeta / "bin").is_dir()
+    except (OSError, ImportError):
+        pass
+    for pf in (os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramFiles")):
+        if pf and (Path(pf) / "WinFsp" / "bin").is_dir():
+            return True
+    return False
 
 
 def elegir_rclone():
@@ -440,11 +496,84 @@ RestartSec=10
 WantedBy=default.target
 """
 
+# Opciones de montaje comunes a Linux y Windows
+MONTAJE_OPCIONES = ["--vfs-cache-mode", "full", "--vfs-cache-max-size", "20G",
+                    "--dir-cache-time", "1h", "--poll-interval", "1m", "--umask", "022",
+                    "--log-level", "NOTICE"]
+MONTAJE_FOTOS = ["--read-only", "--vfs-refresh", "--attr-timeout", "1m"]
+
+# Windows: tarea del Programador de tareas que ejecuta «rclone mount» al iniciar sesión,
+# sin ventana, y la vuelve a lanzar si falla (equivale a la unidad de systemd de arriba).
+TAREA_XML = """<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Mis nubes: {titulo}</Description>
+    <URI>\\Mis nubes\\{nombre}</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId>{usuario}</UserId>
+      <Delay>PT20S</Delay>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>{usuario}</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>true</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>99</Count>
+    </RestartOnFailure>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>{programa}</Command>
+      <Arguments>{argumentos}</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"""
+
 
 # ================================================================ utilidades
 def run(cmd, timeout=None, entrada=None):
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                          input=entrada, stdin=None if entrada is not None else subprocess.DEVNULL)
+                          input=entrada, stdin=None if entrada is not None else subprocess.DEVNULL,
+                          encoding="utf-8", errors="replace", **SIN_VENTANA)
+
+
+def powershell(orden, timeout=60):
+    """Ejecuta una orden de PowerShell (solo Windows)."""
+    return run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                "-Command", orden], timeout=timeout)
+
+
+def schtasks(*args, timeout=60):
+    return run(["schtasks", *args], timeout=timeout)
+
+
+def usuario_windows():
+    dominio = os.environ.get("USERDOMAIN") or os.environ.get("COMPUTERNAME") or ""
+    usuario = os.environ.get("USERNAME") or ""
+    return f"{dominio}\\{usuario}" if dominio else usuario
 
 
 def error_rclone(stderr):
@@ -472,6 +601,20 @@ def q(texto):
     return f'"{t}"'
 
 
+def q_win(texto):
+    """Cita un argumento para la línea de órdenes de Windows (reglas de CommandLineToArgvW)."""
+    if texto and not re.search(r'[\s"]', texto):
+        return texto
+    t = re.sub(r'(\\*)"', lambda m: m.group(1) * 2 + '\\"', texto)
+    t = re.sub(r'(\\+)$', lambda m: m.group(1) * 2, t)
+    return f'"{t}"'
+
+
+def xml_escape(texto):
+    from xml.sax.saxutils import escape
+    return escape(texto, {'"': "&quot;"})
+
+
 _CACHE_CONFIG = {"ruta": None, "marca": None, "datos": {}}
 
 
@@ -484,7 +627,10 @@ def ruta_config_rclone():
                 ruta = salida[-1].strip() if salida else ""
             except OSError:
                 ruta = ""
-        _CACHE_CONFIG["ruta"] = Path(ruta or HOME / ".config/rclone/rclone.conf")
+        if not ruta:
+            ruta = (Path(os.environ.get("APPDATA", HOME / "AppData/Roaming")) / "rclone/rclone.conf"
+                    if WINDOWS else HOME / ".config/rclone/rclone.conf")
+        _CACHE_CONFIG["ruta"] = Path(ruta)
     return _CACHE_CONFIG["ruta"]
 
 
@@ -514,12 +660,33 @@ def carpeta_de(remoto, datos):
 
 
 def unidad_de(remoto):
+    """Nombre del archivo que arranca la nube: unidad de systemd (Linux) o tarea (Windows)."""
     h = hashlib.sha1(remoto.encode()).hexdigest()[:6]
-    return f"mis-nubes-{slug(remoto)}-{h}.service"
+    return f"mis-nubes-{slug(remoto)}-{h}." + ("xml" if WINDOWS else "service")
+
+
+def tarea_de(remoto):
+    """Nombre de la tarea en el Programador de tareas de Windows."""
+    return "Mis nubes\\" + unidad_de(remoto)[len("mis-nubes-"):-len(".xml")]
 
 
 def puntos_de_montaje():
-    """Carpetas montadas ahora mismo, leídas de /proc (no toca las carpetas: nunca se bloquea)."""
+    """Carpetas montadas ahora mismo (no entra en ellas: nunca se bloquea)."""
+    if WINDOWS:
+        # En Windows, WinFsp presenta la nube como un «punto de reanálisis» dentro de la carpeta
+        # base; cuando rclone termina, la carpeta desaparece. Basta mirar ahí.
+        puntos = set()
+        try:
+            for hijo in os.scandir(BASE):
+                try:
+                    atributos = getattr(os.lstat(hijo.path), "st_file_attributes", 0)
+                except OSError:
+                    continue
+                if atributos & getattr(os, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400):
+                    puntos.add(os.path.abspath(hijo.path))
+        except OSError:
+            pass
+        return puntos
     try:
         with open("/proc/self/mountinfo", encoding="utf-8", errors="replace") as f:
             lineas = f.read().splitlines()
@@ -538,16 +705,72 @@ def montado(ruta):
     return os.path.abspath(str(ruta)) in puntos_de_montaje()
 
 
+def argumentos_montaje(remoto, datos):
+    ruta = carpeta_de(remoto, datos)
+    extra = MONTAJE_FOTOS if datos.get("service") == "photos" else []
+    volname = titulo_de(remoto, datos).replace("\n", " ")
+    if WINDOWS:
+        volname = volname[:32]      # límite de Windows para la etiqueta de un volumen
+    args = ["mount", f"{remoto}:", str(ruta), *MONTAJE_OPCIONES, "--volname", volname, *extra]
+    if WINDOWS:
+        args += ["--no-console"]
+    return args
+
+
 def escribir_unidad(remoto, datos):
     titulo = titulo_de(remoto, datos)
     ruta = carpeta_de(remoto, datos)
     UNIT_DIR.mkdir(parents=True, exist_ok=True)
+    programa = shutil.which(RCLONE) or RCLONE
+    archivo = UNIT_DIR / unidad_de(remoto)
+    if WINDOWS:
+        args = argumentos_montaje(remoto, datos)[1:]
+        archivo.write_text(TAREA_XML.format(
+            titulo=xml_escape(titulo.replace("\n", " ")), nombre=xml_escape(tarea_de(remoto)[10:]),
+            usuario=xml_escape(usuario_windows()), programa=xml_escape(programa),
+            argumentos=xml_escape("mount " + " ".join(q_win(a) for a in args))), encoding="utf-16")
+        schtasks("/Create", "/F", "/TN", tarea_de(remoto), "/XML", str(archivo))
+        return
     extra = (" \\\n    --read-only --vfs-refresh --attr-timeout 1m"
              if datos.get("service") == "photos" else "")
-    (UNIT_DIR / unidad_de(remoto)).write_text(UNIT.format(
+    archivo.write_text(UNIT.format(
         titulo=titulo.replace("\n", " ").replace("%", "%%"), titulo_q=q(titulo), ruta=q(str(ruta)),
-        remoto=q(f"{remoto}:"), programa=q(shutil.which(RCLONE) or RCLONE), extra=extra))
+        remoto=q(f"{remoto}:"), programa=q(programa), extra=extra))
     run(["systemctl", "--user", "daemon-reload"])
+
+
+def desmontar(remoto, ruta):
+    """Para la nube (si estaba abierta) sin tocar su configuración."""
+    if WINDOWS:
+        schtasks("/End", "/TN", tarea_de(remoto))
+        for _intento in range(10):
+            if not montado(ruta):
+                break
+            time.sleep(0.5)
+        return
+    run(["systemctl", "--user", "stop", unidad_de(remoto)])
+    if montado(ruta):
+        run(["fusermount3", "-uz", str(ruta)])
+
+
+def apartar_carpeta(ruta):
+    """Si en el sitio de la nube hay una carpeta normal con cosas, se renombra para no perderlas.
+    Deja la ruta lista: vacía (Linux) o inexistente (Windows, donde WinFsp la crea él)."""
+    BASE.mkdir(parents=True, exist_ok=True)
+    if montado(ruta):      # sigue abierta: no se toca (sería la nube, no una carpeta normal)
+        return
+    if ruta.is_dir() and any(ruta.iterdir()):
+        n = 1
+        while (ruta.parent / f"{ruta.name} (antiguo {n})").exists():
+            n += 1
+        ruta.rename(ruta.parent / f"{ruta.name} (antiguo {n})")
+    if WINDOWS:
+        try:
+            ruta.rmdir()
+        except OSError:
+            pass
+    else:
+        ruta.mkdir(parents=True, exist_ok=True)
 
 
 def montar(remoto):
@@ -555,18 +778,13 @@ def montar(remoto):
     ruta = carpeta_de(remoto, datos)
     escribir_unidad(remoto, datos)
     unidad = unidad_de(remoto)
-    run(["systemctl", "--user", "stop", unidad])
-    if montado(ruta):
-        run(["fusermount3", "-uz", str(ruta)])
-    ruta.mkdir(parents=True, exist_ok=True)
-    if any(ruta.iterdir()):
-        n = 1
-        while (ruta.parent / f"{ruta.name} (antiguo {n})").exists():
-            n += 1
-        ruta.rename(ruta.parent / f"{ruta.name} (antiguo {n})")
-        ruta.mkdir()
-    run(["systemctl", "--user", "enable", unidad])
-    run(["systemctl", "--user", "start", unidad])
+    desmontar(remoto, ruta)
+    apartar_carpeta(ruta)
+    if WINDOWS:
+        schtasks("/Run", "/TN", tarea_de(remoto))
+    else:
+        run(["systemctl", "--user", "enable", unidad])
+        run(["systemctl", "--user", "start", unidad])
     for _intento in range(20):
         if montado(ruta):
             return True
@@ -576,12 +794,17 @@ def montar(remoto):
 
 def quitar_unidad(remoto, datos):
     unidad = unidad_de(remoto)
-    run(["systemctl", "--user", "disable", "--now", unidad])
     ruta = carpeta_de(remoto, datos)
-    if montado(ruta):
-        run(["fusermount3", "-uz", str(ruta)])
+    if WINDOWS:
+        desmontar(remoto, ruta)
+        schtasks("/Delete", "/F", "/TN", tarea_de(remoto))
+    else:
+        run(["systemctl", "--user", "disable", "--now", unidad])
+        if montado(ruta):
+            run(["fusermount3", "-uz", str(ruta)])
     (UNIT_DIR / unidad).unlink(missing_ok=True)
-    run(["systemctl", "--user", "daemon-reload"])
+    if not WINDOWS:
+        run(["systemctl", "--user", "daemon-reload"])
     try:
         ruta.rmdir()
     except OSError:
@@ -622,6 +845,9 @@ def icono_tipo(tipo):
 def preparar_sistema():
     """Migra versiones anteriores y añade la app al menú."""
     UNIT_DIR.mkdir(parents=True, exist_ok=True)
+    if WINDOWS:
+        preparar_windows()
+        return
     dump = config_dump()
     migrar = []
     for s in ("rclone-gdrive", "rclone-onedrive", "rclone-icloud"):
@@ -664,6 +890,56 @@ def preparar_sistema():
         pass
 
 
+# ---------------------------------------------- Windows: instalación y menú Inicio
+EXE_INSTALADO = APP_DIR / "Mis nubes.exe"
+VERSION_INSTALADA = APP_DIR / "version.txt"
+ACCESO_INICIO = (Path(os.environ.get("APPDATA", HOME / "AppData/Roaming"))
+                 / "Microsoft/Windows/Start Menu/Programs/Mis nubes.lnk")
+
+
+def version_instalada_windows():
+    try:
+        return version_tupla(VERSION_INSTALADA.read_text())
+    except OSError:
+        return (0,)
+
+
+def crear_acceso_directo(destino, programa, icono=None):
+    """Acceso directo (.lnk) de Windows."""
+    icono = icono or programa
+    powershell(
+        f"$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{destino}'); "
+        f"$s.TargetPath = '{programa}'; $s.WorkingDirectory = '{Path(programa).parent}'; "
+        f"$s.IconLocation = '{icono},0'; $s.Description = 'Mis nubes'; $s.Save()")
+
+
+def preparar_windows():
+    """Copia el programa a su carpeta, lo pone en el menú Inicio y limpia restos de actualizaciones."""
+    if not CONGELADO:
+        return                      # ejecutado como script (python mis_nubes.py): no se instala
+    try:
+        APP_DIR.mkdir(parents=True, exist_ok=True)
+        viejo = EXE_INSTALADO.with_suffix(".exe.viejo")
+        if viejo.exists():
+            try:
+                viejo.unlink()      # la versión anterior, tras actualizar; puede seguir en uso
+            except OSError:
+                pass
+        origen = Path(sys.executable).resolve()
+        if origen != EXE_INSTALADO.resolve() and version_instalada_windows() <= version_tupla(VERSION):
+            tmp = EXE_INSTALADO.with_suffix(".exe.nuevo")
+            shutil.copyfile(origen, tmp)
+            if EXE_INSTALADO.exists():
+                EXE_INSTALADO.replace(viejo)
+            tmp.replace(EXE_INSTALADO)
+            VERSION_INSTALADA.write_text(VERSION)
+        if not ACCESO_INICIO.exists():
+            ACCESO_INICIO.parent.mkdir(parents=True, exist_ok=True)
+            crear_acceso_directo(ACCESO_INICIO, EXE_INSTALADO)
+    except OSError:
+        pass
+
+
 # ---------------------------------------------- actualizaciones
 REPO = "Callejasto/mis-nubes"
 URL_ULTIMA = os.environ.get("MIS_NUBES_ACTUALIZACIONES",
@@ -701,6 +977,18 @@ def version_de_codigo(codigo):
 
 def abrir_version_mas_nueva():
     """Si se abrió un lanzador viejo pero ya hay instalada una versión más nueva, abre esa."""
+    if WINDOWS:
+        if not CONGELADO:
+            return
+        try:
+            if Path(sys.executable).resolve() == EXE_INSTALADO.resolve():
+                return
+        except OSError:
+            return
+        if EXE_INSTALADO.exists() and version_instalada_windows() > version_tupla(VERSION):
+            subprocess.Popen([str(EXE_INSTALADO), *sys.argv[1:]], close_fds=True)
+            os._exit(0)
+        return
     try:
         if Path(__file__).resolve() == PROGRAMA_INSTALADO.resolve():
             return
@@ -709,6 +997,15 @@ def abrir_version_mas_nueva():
         return
     if instalada > version_tupla(VERSION):
         os.execv(sys.executable, [sys.executable, str(PROGRAMA_INSTALADO), *sys.argv[1:]])
+
+
+def reiniciar_programa():
+    """Vuelve a abrir Mis nubes con la versión instalada (tras actualizar)."""
+    if WINDOWS:
+        subprocess.Popen([str(EXE_INSTALADO)] if CONGELADO else [sys.executable, *sys.argv],
+                         close_fds=True)
+        os._exit(0)
+    os.execv(sys.executable, [sys.executable, str(PROGRAMA_INSTALADO)])
 
 
 def tarea_buscar_actualizacion():
@@ -723,9 +1020,12 @@ def tarea_buscar_actualizacion():
             d = json.loads(r.read().decode("utf-8"))
     except Exception:  # noqa: BLE001  (sin internet, GitHub caído…: no es un problema)
         return "error"
-    archivo = next((a for a in d.get("assets", []) if a.get("name", "").endswith(".desktop")), None)
+    extension = ".exe" if WINDOWS else ".desktop"
+    archivo = next((a for a in d.get("assets", []) if a.get("name", "").endswith(extension)), None)
     if not archivo or version_tupla(d.get("tag_name")) <= version_tupla(VERSION):
         return None
+    if WINDOWS and not CONGELADO:
+        return None             # ejecutado como script: se actualiza con git, no con el .exe
     if not url_permitida(archivo.get("browser_download_url"), DESCARGAS_PERMITIDAS):
         return None
     return {"version": d["tag_name"].lstrip("vV"), "url": archivo["browser_download_url"],
@@ -760,6 +1060,8 @@ def tarea_actualizar(info, aviso_progreso):
     if hashlib.sha256(datos).hexdigest() != huella[7:].lower():
         return (False, _("La descarga llegó dañada o no es auténtica. No se instaló nada."),
                 "sha256 no coincide")
+    if WINDOWS:
+        return actualizar_exe(datos, info)
     # 2. Sacar el programa del lanzador y comprobar que es válido y de la versión esperada
     try:
         lanzador = datos.decode("utf-8")
@@ -789,6 +1091,33 @@ def tarea_actualizar(info, aviso_progreso):
     return (True, info["version"], "")
 
 
+def actualizar_exe(datos, info):
+    """Windows: cambia «Mis nubes.exe» por el nuevo. Un .exe en uso se puede renombrar pero no
+    sobrescribir, así que el viejo pasa a .viejo y se borra la próxima vez que se abra."""
+    if datos[:2] != b"MZ":
+        return (False, _("La actualización descargada no es válida. No se instaló nada."),
+                "no es un ejecutable de Windows")
+    try:
+        APP_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = EXE_INSTALADO.with_suffix(".exe.nuevo")
+        tmp.write_bytes(datos)
+        viejo = EXE_INSTALADO.with_suffix(".exe.viejo")
+        if viejo.exists():
+            try:
+                viejo.unlink()
+            except OSError:
+                viejo = EXE_INSTALADO.with_suffix(f".exe.viejo{int(time.time())}")
+        if EXE_INSTALADO.exists():
+            EXE_INSTALADO.replace(viejo)
+        tmp.replace(EXE_INSTALADO)
+        VERSION_INSTALADA.write_text(info["version"])
+        if not ACCESO_INICIO.exists():
+            crear_acceso_directo(ACCESO_INICIO, EXE_INSTALADO)
+    except OSError as e:
+        return (False, _("No se pudo instalar la actualización."), str(e))
+    return (True, info["version"], "")
+
+
 # ---------------------------------------------- pasos del asistente de rclone
 PROCESO = {"p": None}
 
@@ -796,8 +1125,13 @@ PROCESO = {"p": None}
 def liberar_puerto():
     """Cierra asistentes de rclone que se quedaron abiertos (ocupan el puerto 53682)."""
     try:
-        run(["pkill", "-u", str(os.getuid()), "-f", "rclone[-.0-9]* config (create|update)"])
-    except (FileNotFoundError, OSError):
+        if WINDOWS:
+            powershell("Get-CimInstance Win32_Process -Filter \"Name like 'rclone%'\" | "
+                       "Where-Object { $_.CommandLine -match 'config (create|update)' } | "
+                       "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }", timeout=30)
+        else:
+            run(["pkill", "-u", str(os.getuid()), "-f", "rclone[-.0-9]* config (create|update)"])
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
         pass
 
 
@@ -820,7 +1154,8 @@ def paso_rclone(args, timeout, reintento=True, respuesta=None):
         # usuario puede leer; la línea de comandos la podría ver cualquiera del ordenador.
         entorno["RCLONE_RESULT"] = respuesta
     p = subprocess.Popen([RCLONE, *args, "--non-interactive"], stdout=subprocess.PIPE,
-                         stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True, env=entorno)
+                         stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True, env=entorno,
+                         encoding="utf-8", errors="replace", **SIN_VENTANA)
     PROCESO["p"] = p
     lineas_err = []
     agotado = {"si": False}
@@ -990,17 +1325,42 @@ ICONO_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <path fill="#4DA3FF" d="M186 294 h140 v46 a10 10 0 0 1 -10 10 h-120 a10 10 0 0 1 -10 -10 z"/>
 </svg>
 """
-ICONO_RUTA = HOME / ".local/share/icons/hicolor/scalable/apps/mis-nubes.svg"
+ICONO_RUTA = (APP_DIR / "mis-nubes.svg" if WINDOWS
+              else HOME / ".local/share/icons/hicolor/scalable/apps/mis-nubes.svg")
 
 
 def icono_app():
     if ICONO_RUTA.exists():
         return QIcon(str(ICONO_RUTA))
-    return QIcon.fromTheme("folder-cloud")
+    try:
+        ICONO_RUTA.parent.mkdir(parents=True, exist_ok=True)
+        ICONO_RUTA.write_text(ICONO_SVG, encoding="utf-8")
+        return QIcon(str(ICONO_RUTA))
+    except OSError:
+        return QIcon.fromTheme("folder-cloud")
+
+
+def anclar_acceso_rapido():
+    """Windows: carpeta «Nube» en el panel izquierdo del Explorador (Acceso rápido). Solo una vez."""
+    if leer_ajustes().get("anclada") == str(BASE):
+        return
+    try:
+        BASE.mkdir(parents=True, exist_ok=True)
+        ruta = str(BASE).replace("'", "''")
+        r = powershell(f"(New-Object -ComObject shell.application).Namespace('{ruta}')"
+                       ".Self.InvokeVerb('pintohome')", timeout=30)
+        if r.returncode == 0:
+            guardar_ajuste("anclada", str(BASE))
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def instalar_extras():
-    """Icono propio, acceso en el menú, lanzador descargado con icono y atajo en Dolphin."""
+    """Icono propio, acceso en el menú, lanzador descargado con icono y atajo en el explorador."""
+    if WINDOWS:
+        icono_app()
+        anclar_acceso_rapido()
+        return
     try:
         ICONO_RUTA.parent.mkdir(parents=True, exist_ok=True)
         if not ICONO_RUTA.exists() or ICONO_RUTA.read_text() != ICONO_SVG:
@@ -1045,12 +1405,14 @@ def instalar_extras():
 
 # ================================================================ iCloud Fotos (en línea)
 TIPO_FOTOS = "icloudfotos"
-FOTOS_CFG = HOME / ".config/mis-nubes/fotos.json"      # versión anterior (copia con icloudpd)
+FOTOS_CFG = CONFIG_DIR / "fotos.json"      # versión anterior (copia con icloudpd)
 FOTOS_SESION = APP_DIR / "icloud-sesion"
 
 
 def migrar_fotos_copia():
     """La versión anterior copiaba las fotos al PC. Se detiene; las fotos copiadas se conservan."""
+    if WINDOWS:
+        return []       # esa versión nunca existió en Windows
     try:
         lista = json.loads(FOTOS_CFG.read_text())
     except (OSError, json.JSONDecodeError):
@@ -1104,18 +1466,60 @@ def descargar_rclone(aviso_progreso):
                 if total:
                     aviso_progreso(int(datos.tell() * 100 / total))
         with zipfile.ZipFile(datos) as z:
-            miembro = next(n for n in z.namelist() if n.endswith("/rclone"))
-            tmp = RCLONE_PROPIO.with_suffix(".tmp")
+            binario = "/rclone.exe" if WINDOWS else "/rclone"
+            miembro = next(n for n in z.namelist() if n.endswith(binario))
+            tmp = RCLONE_PROPIO.with_name(RCLONE_PROPIO.name + ".tmp")
             tmp.write_bytes(z.read(miembro))
         tmp.chmod(0o755)
-        tmp.rename(RCLONE_PROPIO)
+        tmp.replace(RCLONE_PROPIO)
         elegir_rclone()
         return (True, "")
     except Exception as e:  # noqa: BLE001
         return (False, str(e))
 
 
-ESPACIO_CACHE = HOME / ".cache/mis-nubes/espacio.json"
+def instalar_winfsp(aviso_progreso):
+    """Windows: descarga el instalador oficial de WinFsp (GitHub) y lo ejecuta. Windows pedirá
+    permiso de administrador una vez. Devuelve (ok, detalle)."""
+    import tempfile
+    import urllib.request
+    try:
+        pedido = urllib.request.Request(WINFSP_URL_API, headers={
+            "Accept": "application/vnd.github+json", "User-Agent": f"mis-nubes/{VERSION}"})
+        with urllib.request.urlopen(pedido, timeout=20) as r:
+            d = json.loads(r.read().decode("utf-8"))
+        archivo = next((a for a in d.get("assets", []) if a.get("name", "").endswith(".msi")), None)
+        url = (archivo or {}).get("browser_download_url", "")
+        if not url_permitida(url, WINFSP_DESCARGAS):
+            return (False, "no se encontró el instalador .msi en la última versión de WinFsp")
+        datos = bytearray()
+        with urllib.request.urlopen(urllib.request.Request(
+                url, headers={"User-Agent": f"mis-nubes/{VERSION}"}), timeout=120) as r:
+            total = int(r.headers.get("Content-Length") or 0)
+            while True:
+                bloque = r.read(256 * 1024)
+                if not bloque:
+                    break
+                datos += bloque
+                if total:
+                    aviso_progreso(int(len(datos) * 90 / total))
+        huella = (archivo.get("digest") or "")
+        if huella.startswith("sha256:") and hashlib.sha256(datos).hexdigest() != huella[7:].lower():
+            return (False, "la descarga de WinFsp llegó dañada (sha256 no coincide)")
+        msi = Path(tempfile.gettempdir()) / "winfsp-mis-nubes.msi"
+        msi.write_bytes(datos)
+        # Instalación con permiso de administrador (ventana de Windows «¿Permitir…?»)
+        r = powershell(f"$p = Start-Process msiexec.exe -ArgumentList '/i','\"{msi}\"','/passive',"
+                       f"'/norestart' -Verb RunAs -Wait -PassThru; exit $p.ExitCode", timeout=600)
+        aviso_progreso(100)
+        if not winfsp_instalado():
+            return (False, f"msiexec terminó con código {r.returncode}: {r.stderr.strip()[:300]}")
+        return (True, "")
+    except Exception as e:  # noqa: BLE001
+        return (False, str(e))
+
+
+ESPACIO_CACHE = CACHE_DIR / "espacio.json"
 
 
 def espacio_guardado():
@@ -1159,7 +1563,7 @@ OFICIALES = {
     "pcloud": ["pcloud"], "yandex": ["yandex-disk"], "box": ["box"], "seafile": ["seafile"],
     "smb": ["folder-network"], "sftp": ["folder-remote"], "ftp": ["folder-remote"],
 }
-PAPIRUS = [Path("/usr/share/icons/Papirus"), HOME / ".local/share/icons/Papirus"]
+PAPIRUS = [] if WINDOWS else [Path("/usr/share/icons/Papirus"), HOME / ".local/share/icons/Papirus"]
 
 # Iconos propios (diseños originales de Mis nubes) para servicios que Papirus no trae.
 # No son los logotipos oficiales de esas marcas.
@@ -1271,7 +1675,7 @@ ICONOS_PROPIOS["b2"] = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 5
   </g>
 </svg>
 """
-ICONOS_CACHE = HOME / ".cache/mis-nubes/iconos"
+ICONOS_CACHE = CACHE_DIR / "iconos"
 _ICONOS = {}
 
 
@@ -2380,7 +2784,7 @@ class AcercaDe(QDialog):
         l.addWidget(ico)
         for texto, nombre in (("Mis nubes", "titulo"), (_("Versión {v}").format(v=VERSION), "gris"),
                               (CREDITOS, None),
-                              ("Tus nubes como carpetas normales en Linux: Google Drive, OneDrive, "
+                              ("Tus nubes como carpetas normales en tu ordenador: Google Drive, OneDrive, "
                                "iCloud, Dropbox, MEGA y muchas más.", "gris"),
                               ("Funciona gracias a <b>rclone</b> (rclone.org), un programa libre. "
                                "Iconos de los servicios: tema libre <b>Papirus</b>.", "pequeno")):
@@ -2550,6 +2954,101 @@ class Tarjeta(QFrame):
         self.btn.style().unpolish(self.btn)
         self.btn.style().polish(self.btn)
         self.modo = modo
+
+
+# ================================================================ Windows: primera vez
+class Preparacion(QDialog):
+    """Windows: descarga rclone y, si falta, instala WinFsp (pide permiso de administrador)."""
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle(_(APP))
+        self.setWindowIcon(icono_app())
+        self.setFixedWidth(460)
+        self.lz = Lanzador()
+        self.ok = False
+        l = QVBoxLayout(self)
+        l.setContentsMargins(30, 26, 30, 22)
+        l.setSpacing(10)
+        ico = QLabel()
+        ico.setPixmap(icono_app().pixmap(80, 80))
+        ico.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        l.addWidget(ico)
+        t = etiqueta("Preparando Mis nubes", "subtitulo")
+        t.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        l.addWidget(t)
+        self.texto = etiqueta("Solo pasa la primera vez. Se descargan dos programas libres que "
+                              "hacen falta: <b>rclone</b> (conecta con las nubes) y <b>WinFsp</b> "
+                              "(muestra las nubes como carpetas). Windows te pedirá permiso para "
+                              "instalar WinFsp: pulsa «Sí».", "gris")
+        self.texto.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        l.addWidget(self.texto)
+        self.barra = QProgressBar()
+        self.barra.setTextVisible(False)
+        self.barra.setRange(0, 100)
+        l.addWidget(self.barra)
+        self.estado = etiqueta("", "pequeno")
+        self.estado.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        l.addWidget(self.estado)
+        fila = QHBoxLayout()
+        fila.addStretch()
+        self.b_cancelar = boton("Cancelar", None, self.reject)
+        self.b_empezar = boton("Empezar", "primario", self._empezar)
+        fila.addWidget(self.b_cancelar)
+        fila.addWidget(self.b_empezar)
+        l.addLayout(fila)
+        EVENTOS.progreso.connect(self.barra.setValue)
+
+    def _empezar(self):
+        self.b_empezar.setEnabled(False)
+        self._paso_rclone()
+
+    def _paso_rclone(self):
+        if shutil.which("rclone") or RCLONE_PROPIO.exists():
+            self._paso_winfsp()
+            return
+        self.estado.setText(_("Descargando rclone (unos 25 MB)…"))
+        self.barra.setValue(0)
+        self.lz.lanzar(descargar_rclone, [EVENTOS.progreso.emit], self._rclone_listo)
+
+    def _rclone_listo(self, res):
+        if not res[0]:
+            self._fallo(_("No se pudo descargar rclone. Comprueba tu internet e inténtalo de nuevo."),
+                        res[1] if len(res) > 1 else None)
+            return
+        self._paso_winfsp()
+
+    def _paso_winfsp(self):
+        if winfsp_instalado():
+            self._listo()
+            return
+        self.estado.setText(_("Descargando e instalando WinFsp… Si Windows pregunta, pulsa «Sí»."))
+        self.barra.setValue(0)
+        self.lz.lanzar(instalar_winfsp, [EVENTOS.progreso.emit], self._winfsp_listo)
+
+    def _winfsp_listo(self, res):
+        if not res[0]:
+            self._fallo(_("No se pudo instalar WinFsp. Puedes instalarlo tú desde winfsp.dev y "
+                          "volver a abrir Mis nubes."), res[1] if len(res) > 1 else None)
+            return
+        self._listo()
+
+    def _listo(self):
+        self.ok = True
+        self.accept()
+
+    def _fallo(self, texto, detalle):
+        avisar(self, texto, detalle or None)
+        self.estado.setText("")
+        self.b_empezar.setEnabled(True)
+
+
+def faltan_programas():
+    """Qué hace falta instalar antes de abrir la ventana principal."""
+    hay_rclone = bool(shutil.which("rclone") or RCLONE_PROPIO.exists())
+    if WINDOWS:
+        return not (hay_rclone and winfsp_instalado())
+    return not (hay_rclone and shutil.which("fusermount3"))
 
 
 # ================================================================ ventana
@@ -2740,7 +3239,7 @@ class Ventana(QWidget):
         if confirmar(self, _("Mis nubes se actualizó a la versión {v}.\n\n¿Reiniciar ahora para "
                              "usarla? Tus nubes siguen funcionando mientras tanto.").format(v=dato),
                      si="Reiniciar ahora", no="Más tarde"):
-            os.execv(sys.executable, [sys.executable, str(PROGRAMA_INSTALADO)])
+            reiniciar_programa()
         self.mensaje(True, _("Actualizado. La versión nueva se usará la próxima vez que abras "
                              "Mis nubes."))
 
@@ -2841,10 +3340,17 @@ def main():
         app.installTranslator(traductor)
     aplicar_tema(app)
     elegir_rclone()
-    if not (shutil.which("rclone") or RCLONE_PROPIO.exists()) or not shutil.which("fusermount3"):
-        avisar(None, "Faltan algunos programas necesarios. Cierra esta ventana y vuelve a abrir "
-                     "el archivo «Mis nubes» para instalarlos.")
-        return 1
+    app.setWindowIcon(icono_app())
+    if faltan_programas():
+        if not WINDOWS:
+            avisar(None, "Faltan algunos programas necesarios. Cierra esta ventana y vuelve a abrir "
+                         "el archivo «Mis nubes» para instalarlos.")
+            return 1
+        prep = Preparacion()
+        prep.exec()
+        if not prep.ok:
+            return 1
+        elegir_rclone()
     preparar_sistema()
     instalar_extras()
     aviso = None
@@ -3124,7 +3630,7 @@ TRADUCCIONES["en"] = {
     "Volver a iniciar sesión": "Sign in again",
     "Acerca de Mis nubes": "About My Clouds",
     "Versión {v}": "Version {v}",
-    "Tus nubes como carpetas normales en Linux: Google Drive, OneDrive, iCloud, Dropbox, MEGA y muchas más.": "Your clouds as regular folders on Linux: Google Drive, OneDrive, iCloud, Dropbox, MEGA and many more.",
+    "Tus nubes como carpetas normales en tu ordenador: Google Drive, OneDrive, iCloud, Dropbox, MEGA y muchas más.": "Your clouds as regular folders on your computer: Google Drive, OneDrive, iCloud, Dropbox, MEGA and many more.",
     "Funciona gracias a <b>rclone</b> (rclone.org), un programa libre. Iconos de los servicios: tema libre <b>Papirus</b>.": "Powered by <b>rclone</b> (rclone.org), a free program. Service icons: the free <b>Papirus</b> theme.",
     "Idioma:": "Language:",
     "Automático (el del sistema)": "Automatic (system language)",
@@ -3181,7 +3687,13 @@ TRADUCCIONES["en"] = {
     "Buscar actualizaciones ahora": "Check for updates now",
     "Buscando…": "Checking…",
     "No se pudo comprobar si hay versiones nuevas. Revisa tu conexión a internet e inténtalo más tarde.": "Could not check for new versions. Check your internet connection and try again later.",
-    "Tienes la última versión ({v}).": "You have the latest version ({v})."
+    "Tienes la última versión ({v}).": "You have the latest version ({v}).",
+    "Preparando Mis nubes": "Setting up My Clouds",
+    "Solo pasa la primera vez. Se descargan dos programas libres que hacen falta: <b>rclone</b> (conecta con las nubes) y <b>WinFsp</b> (muestra las nubes como carpetas). Windows te pedirá permiso para instalar WinFsp: pulsa «Sí».": "This only happens the first time. Two free programs that are needed will be downloaded: <b>rclone</b> (connects to the clouds) and <b>WinFsp</b> (shows the clouds as folders). Windows will ask for permission to install WinFsp: press \"Yes\".",
+    "Descargando rclone (unos 25 MB)…": "Downloading rclone (about 25 MB)…",
+    "No se pudo descargar rclone. Comprueba tu internet e inténtalo de nuevo.": "Could not download rclone. Check your internet connection and try again.",
+    "Descargando e instalando WinFsp… Si Windows pregunta, pulsa «Sí».": "Downloading and installing WinFsp… If Windows asks, press \"Yes\".",
+    "No se pudo instalar WinFsp. Puedes instalarlo tú desde winfsp.dev y volver a abrir Mis nubes.": "Could not install WinFsp. You can install it yourself from winfsp.dev and open My Clouds again.",
 }
 
 

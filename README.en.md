@@ -29,7 +29,7 @@ For people who **don't know how to use the terminal**. Everything happens in win
 2. **Double-click** it. The first time it downloads two free programs it needs: **rclone** and **WinFsp** (about 30 MB). Windows will ask for permission to install WinFsp: press **"Yes"**.
 3. Press **"Add cloud"** and follow the steps.
 
-Each cloud can be shown **as a drive in "This PC"** (with its own letter, e.g. `G:`, recommended) or **as a folder** inside `Clouds`; you choose when adding it and can change it later from the ⋯ button on its card. After the first time, **My Clouds** appears in the Start menu.
+Each cloud can be shown **as a drive in "This PC"** (with its own letter, e.g. `G:`, recommended) or **as a folder** inside `Clouds`; you choose when adding it and can change it later from the ⋯ button on its card. After the first time, **My Clouds** is installed (you can delete the downloaded file), with shortcuts on the Desktop and in the Start menu, and it opens in the background when you turn on the computer: its icon next to the clock shows each cloud's status and lets you connect or disconnect it.
 
 > **Requirements:** Windows 10 or 11 (64-bit). If Windows SmartScreen warns that the file is unknown, press "More info" › "Run anyway" (the program is not signed with a paid certificate).
 
@@ -53,6 +53,7 @@ After the first time, **My Clouds** appears in your application menu with its ic
 - **More than 60 services:** Google Drive, Google Photos, OneDrive, iCloud Drive, iCloud Photos, Dropbox, MEGA, Proton Drive, pCloud, Box, Nextcloud/ownCloud (WebDAV), Windows shared folders (SMB), SFTP, FTP, Amazon S3 and compatible, Backblaze B2 and many more.
 - **Several accounts** of the same service, each with **a name you choose** (for example, "Work Drive" and "Personal Drive").
 - **They open on their own** when you turn on your computer.
+- **Icon next to the clock:** each cloud's status, connect/disconnect without opening the window.
 - **They don't take up space:** files are downloaded when you open them.
 - **Used space** for each cloud (for services that allow it).
 - **iCloud Photos online:** your photos by album, without copying them to your computer (read only).

@@ -29,7 +29,7 @@ Para personas que **no saben usar la terminal**. Todo se hace con ventanas, en e
 2. Haz **doble clic** sobre él. La primera vez descarga dos programas libres que necesita: **rclone** y **WinFsp** (unos 30 MB). Windows pedirá permiso para instalar WinFsp: pulsa **«Sí»**.
 3. Pulsa **«Añadir nube»** y sigue los pasos.
 
-Cada nube puede verse **como una unidad más en «Este equipo»** (con su letra, por ejemplo `G:`, lo recomendado) o **como una carpeta** dentro de `Nube`; se elige al añadirla y se puede cambiar después desde el botón ⋯ de su tarjeta. Después de la primera vez, **Mis nubes** aparece en el menú Inicio.
+Cada nube puede verse **como una unidad más en «Este equipo»** (con su letra, por ejemplo `G:`, lo recomendado) o **como una carpeta** dentro de `Nube`; se elige al añadirla y se puede cambiar después desde el botón ⋯ de su tarjeta. Después de la primera vez, **Mis nubes** queda instalado (puedes borrar el archivo descargado), con acceso directo en el Escritorio y el menú Inicio, y se abre en segundo plano al encender el equipo: su icono junto al reloj muestra el estado de cada nube y permite conectarla o desconectarla.
 
 > **Requisitos:** Windows 10 u 11 (64 bits). Si Windows SmartScreen avisa de que el archivo no es conocido, pulsa «Más información» › «Ejecutar de todas formas» (el programa no está firmado con un certificado de pago).
 
@@ -54,6 +54,7 @@ Después de la primera vez, **Mis nubes** aparece en el menú de aplicaciones co
 - **Más de 60 servicios:** Google Drive, Google Fotos, OneDrive, iCloud Drive, iCloud Fotos, Dropbox, MEGA, Proton Drive, pCloud, Box, Nextcloud/ownCloud (WebDAV), carpetas compartidas de Windows (SMB), SFTP, FTP, Amazon S3 y compatibles, Backblaze B2 y muchos más.
 - **Varias cuentas** del mismo servicio, cada una con **el nombre que tú elijas** (por ejemplo, «Drive del trabajo» y «Drive personal»).
 - **Se abren solas** al encender el ordenador.
+- **Icono junto al reloj:** estado de cada nube y conectar/desconectar sin abrir la ventana.
 - **No ocupan espacio:** los archivos se descargan cuando los abres.
 - **Espacio usado** de cada nube (en los servicios que lo permiten).
 - **iCloud Fotos en línea:** tus fotos por álbumes, sin copiarlas al ordenador (solo lectura).

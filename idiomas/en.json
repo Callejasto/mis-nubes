@@ -342,5 +342,12 @@
   "Mostrar como unidad en «Este equipo»": "Show as a drive in \"This PC\"",
   "Abrir «Este equipo»": "Open \"This PC\"",
   "Cambiando…": "Changing…",
-  "No se pudo preparar la carpeta en este ordenador.": "The folder could not be set up on this computer."
+  "No se pudo preparar la carpeta en este ordenador.": "The folder could not be set up on this computer.",
+  "«{nombre}» desconectada. Vuelve a conectarla cuando quieras.": "\"{nombre}\" disconnected. Connect it again whenever you want.",
+  "Mis nubes ya está instalado: tienes su acceso directo en el Escritorio y en el menú Inicio, y se abrirá en segundo plano al encender el equipo (icono junto al reloj). El archivo que descargaste ya puedes borrarlo.": "My Clouds is now installed: you have its shortcut on the Desktop and in the Start menu, and it will open in the background when you turn on the computer (icon next to the clock). You can delete the file you downloaded.",
+  "Añadir nube…": "Add cloud…",
+  "Abrir Mis nubes": "Open My Clouds",
+  "Salir": "Quit",
+  "conectadas": "connected",
+  "Sigue abierto aquí, junto al reloj. Para cerrarlo del todo: clic derecho › Salir.": "It stays open here, next to the clock. To close it completely: right-click › Quit."
 }

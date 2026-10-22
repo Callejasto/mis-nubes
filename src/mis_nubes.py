@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout,
     QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu,
     QMessageBox, QProgressBar, QPushButton, QScrollArea, QStackedWidget,
-    QVBoxLayout, QWidget,
+    QSystemTrayIcon, QVBoxLayout, QWidget,
 )
 
 APP = "Mis nubes"
@@ -1154,6 +1154,47 @@ def preparar_windows():
         if not ACCESO_INICIO.exists():
             ACCESO_INICIO.parent.mkdir(parents=True, exist_ok=True)
             crear_acceso_directo(ACCESO_INICIO, EXE_INSTALADO)
+        if not leer_ajustes().get("instalado"):
+            # Primera vez: acceso en el Escritorio (solo una vez: si el usuario lo borra, no vuelve)
+            crear_acceso_escritorio(EXE_INSTALADO)
+            activar_arranque_windows()
+            guardar_ajuste("instalado", VERSION)
+            AVISOS.append(_("Mis nubes ya está instalado: tienes su acceso directo en el Escritorio y "
+                            "en el menú Inicio, y se abrirá en segundo plano al encender el equipo "
+                            "(icono junto al reloj). El archivo que descargaste ya puedes borrarlo."))
+    except OSError:
+        pass
+
+
+AVISOS = []     # mensajes para mostrar al abrir la ventana
+
+
+def crear_acceso_escritorio(programa):
+    ps = lambda t: str(t).replace("'", "''")  # noqa: E731
+    powershell(
+        "$d = [Environment]::GetFolderPath('Desktop'); "
+        "$s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $d 'Mis nubes.lnk')); "
+        f"$s.TargetPath = '{ps(programa)}'; $s.WorkingDirectory = '{ps(Path(programa).parent)}'; "
+        f"$s.IconLocation = '{ps(programa)},0'; $s.Description = 'Mis nubes'; $s.Save()")
+
+
+CLAVE_ARRANQUE = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+
+def activar_arranque_windows(activar=True):
+    """Abre Mis nubes en segundo plano (icono junto al reloj) al iniciar sesión en Windows."""
+    if not WINDOWS or not CONGELADO:
+        return
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, CLAVE_ARRANQUE, 0, winreg.KEY_SET_VALUE) as k:
+            if activar:
+                winreg.SetValueEx(k, "Mis nubes", 0, winreg.REG_SZ, f'"{EXE_INSTALADO}" --bandeja')
+            else:
+                try:
+                    winreg.DeleteValue(k, "Mis nubes")
+                except OSError:
+                    pass
     except OSError:
         pass
 
@@ -1456,6 +1497,14 @@ def tarea_montar(remoto):
     return (False, "No se pudo abrir la carpeta. Comprueba tu conexión a internet.")
 
 
+def tarea_pausar(remoto):
+    """Para la nube hasta que se vuelva a conectar (no borra nada)."""
+    datos = config_dump().get(remoto, {})
+    desmontar(remoto, carpeta_de(remoto, datos))
+    return (True, _("«{nombre}» desconectada. Vuelve a conectarla cuando quieras.")
+            .format(nombre=titulo_de(remoto, datos)))
+
+
 def tarea_desconectar(remoto):
     quitar_unidad(remoto, config_dump().get(remoto, {}))
     run([RCLONE, "config", "delete", remoto])
@@ -1537,7 +1586,7 @@ def titulo_grande(texto, extra=6):
 
 
 # ================================================================ versión y créditos
-VERSION = "1.4.2"
+VERSION = "1.5"
 CREDITOS = "Creado por Jose Callejas (Callejasto) y Claude (Anthropic)"
 
 # ================================================================ icono propio
@@ -3350,6 +3399,48 @@ def faltan_programas():
     return not (hay_rclone and shutil.which("fusermount3"))
 
 
+# ================================================================ bandeja del sistema
+class Bandeja(QSystemTrayIcon):
+    """Icono junto al reloj: estado de cada nube, conectar/desconectar, abrir la ventana."""
+
+    def __init__(self, ventana):
+        super().__init__(icono_app(), ventana)
+        self.v = ventana
+        self.setToolTip(_(APP))
+        self.menu = QMenu()
+        self.setContextMenu(self.menu)
+        self.activated.connect(self._clic)
+        self.avisado = False
+        self.rellenar({}, set())
+
+    def _clic(self, razon):
+        if razon in (QSystemTrayIcon.ActivationReason.Trigger,
+                     QSystemTrayIcon.ActivationReason.DoubleClick):
+            self.v.mostrar()
+
+    def rellenar(self, dump, montajes):
+        self.menu.clear()
+        orden = sorted(dump, key=lambda r: titulo_de(r, dump[r]).lower())
+        for r in orden:
+            datos = dump[r]
+            ruta = carpeta_de(r, datos)
+            abierta = clave_ruta(ruta) in montajes
+            sub = self.menu.addMenu(("🟢 " if abierta else "⚪ ") + titulo_de(r, datos))
+            if abierta:
+                sub.addAction(_("Abrir"), lambda _c=False, ruta=ruta: self.v.abrir(ruta))
+                sub.addAction(_("Desconectar"), lambda _c=False, r=r: self.v.pausar_remoto(r))
+            else:
+                sub.addAction(_("Conectar"), lambda _c=False, r=r: self.v.montar_remoto(r))
+        if orden:
+            self.menu.addSeparator()
+        self.menu.addAction(_("Añadir nube…"), lambda: (self.v.mostrar(), self.v.anadir()))
+        self.menu.addAction(_("Abrir Mis nubes"), self.v.mostrar)
+        self.menu.addSeparator()
+        self.menu.addAction(_("Salir"), self.v.salir)
+        n = sum(1 for r in orden if clave_ruta(carpeta_de(r, dump[r])) in montajes)
+        self.setToolTip(_(APP) + (f" · {n}/{len(orden)} " + _("conectadas") if orden else ""))
+
+
 # ================================================================ ventana
 class Ventana(QWidget):
     def __init__(self, aviso_inicial=None):
@@ -3476,6 +3567,8 @@ class Ventana(QWidget):
         reordenar = orden != getattr(self, "_orden", None)
         self._orden = orden
         montajes = puntos_de_montaje()
+        if getattr(self, "bandeja", None):
+            self.bandeja.rellenar(dump, montajes)
         for i, r in enumerate(orden):
             nueva = r not in self.tarjetas
             if nueva:
@@ -3601,6 +3694,33 @@ class Ventana(QWidget):
             tj.ocupado("Conectando…")
             self.lz.lanzar(tarea_montar, [tj.remoto], lambda r: self.tras_tarea(tj, r))
 
+    def montar_remoto(self, remoto):
+        tj = self.tarjetas.get(remoto)
+        if tj and not tj.ocupada:
+            tj.ocupado("Conectando…")
+            self.lz.lanzar(tarea_montar, [remoto], lambda r: self.tras_tarea(tj, r))
+
+    def pausar_remoto(self, remoto):
+        tj = self.tarjetas.get(remoto)
+        if tj and not tj.ocupada:
+            tj.ocupado("Desconectando…")
+            self.lz.lanzar(tarea_pausar, [remoto], lambda r: self.tras_tarea(tj, r))
+
+    def mostrar(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def salir(self):
+        if any(t.fn is not tarea_espacio for t in self.lz.tareas):
+            self.mostrar()
+            if not confirmar(self, "Todavía se está haciendo algo. ¿Cerrar de todas formas?",
+                             si="Cerrar", no="Esperar"):
+                return
+            if PROCESO["p"]:
+                PROCESO["p"].kill()
+        os._exit(0)
+
     def cambiar_modo(self, tj):
         nuevo = "carpeta" if es_unidad(tj.ruta) else "unidad"
         tj.ocupado("Cambiando…")
@@ -3631,6 +3751,16 @@ class Ventana(QWidget):
         self.lz.lanzar(tarea_desconectar, [tj.remoto], lambda res: self.tras_tarea(tj, res))
 
     def closeEvent(self, ev):
+        if getattr(self, "bandeja", None):
+            # La ventana se esconde; el programa sigue junto al reloj (las nubes no dependen de él)
+            ev.ignore()
+            self.hide()
+            if not self.bandeja.avisado:
+                self.bandeja.avisado = True
+                self.bandeja.showMessage(_(APP), _("Sigue abierto aquí, junto al reloj. "
+                                                   "Para cerrarlo del todo: clic derecho › Salir."),
+                                         icono_app(), 6000)
+            return
         if any(t.fn is not tarea_espacio for t in self.lz.tareas):
             if not confirmar(self, "Todavía se está haciendo algo. ¿Cerrar de todas formas?",
                              si="Cerrar", no="Esperar"):
@@ -3676,8 +3806,17 @@ def main():
                   "Si no las necesitas, puedes borrar esa carpeta para liberar espacio.").format(
             carpetas="», «".join(f"{BASE.name} › {c}" for c in copiadas))
     app.setWindowIcon(icono_app())
-    v = Ventana(aviso)
-    v.show()
+    v = Ventana(aviso or (AVISOS[0] if AVISOS else None))
+    v.bandeja = None
+    if QSystemTrayIcon.isSystemTrayAvailable():
+        app.setQuitOnLastWindowClosed(False)
+        v.bandeja = Bandeja(v)
+        v.bandeja.show()
+        v.refrescar()
+    if "--bandeja" in sys.argv and v.bandeja and not aviso and not AVISOS:
+        pass            # arranque con el sistema: solo el icono junto al reloj
+    else:
+        v.show()
     return app.exec()
 
 
@@ -4027,6 +4166,13 @@ TRADUCCIONES["en"] = {
     "Abrir «Este equipo»": "Open \"This PC\"",
     "Cambiando…": "Changing…",
     "No se pudo preparar la carpeta en este ordenador.": "The folder could not be set up on this computer.",
+    "«{nombre}» desconectada. Vuelve a conectarla cuando quieras.": "\"{nombre}\" disconnected. Connect it again whenever you want.",
+    "Mis nubes ya está instalado: tienes su acceso directo en el Escritorio y en el menú Inicio, y se abrirá en segundo plano al encender el equipo (icono junto al reloj). El archivo que descargaste ya puedes borrarlo.": "My Clouds is now installed: you have its shortcut on the Desktop and in the Start menu, and it will open in the background when you turn on the computer (icon next to the clock). You can delete the file you downloaded.",
+    "Añadir nube…": "Add cloud…",
+    "Abrir Mis nubes": "Open My Clouds",
+    "Salir": "Quit",
+    "conectadas": "connected",
+    "Sigue abierto aquí, junto al reloj. Para cerrarlo del todo: clic derecho › Salir.": "It stays open here, next to the clock. To close it completely: right-click › Quit.",
 }
 
 

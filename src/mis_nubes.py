@@ -3763,6 +3763,11 @@ def exportar_idioma(codigo):
                                    "español y no se tocan. Respeta {variables} y etiquetas <b>.",
                  **{k: existente.get(k, "" if codigo != "en" else v)
                     for k, v in base.items() if not k.startswith("_")}}
+    if sys.stdout is not None:
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")     # Windows: la consola no siempre es UTF-8
+        except (AttributeError, ValueError):
+            pass
     print(json.dumps(plantilla, ensure_ascii=False, indent=2))
 
 

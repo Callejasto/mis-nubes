@@ -16,6 +16,8 @@ permissions:
 jobs:
   exe:
     runs-on: windows-latest
+    env:
+      PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -37,7 +39,15 @@ jobs:
           sys.exit(0 if v == tag else "La etiqueta no coincide con VERSION en src/mis_nubes.py")
 
       - name: Comprobar el código con el Python de Windows
-        run: python src/mis_nubes.py --exportar-idioma en | Select-Object -First 3
+        shell: pwsh
+        run: |
+          $salida = & python src/mis_nubes.py --exportar-idioma en 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0) {
+            # Como anotación, para poder leer el fallo sin descargar el registro completo
+            Write-Output ("::error::" + ($salida -replace "`r?`n", "%0A"))
+            exit 1
+          }
+          ($salida -split "`n")[0..2]
 
       - name: Compilar
         run: python construir-windows.py
@@ -54,7 +64,7 @@ jobs:
           $ok = $p.WaitForExit(120000)
           if (-not $ok) { Stop-Process -Id $p.Id -Force; Get-Process -Name "Mis nubes" -ErrorAction SilentlyContinue | Stop-Process -Force }
           $log = "$env:LOCALAPPDATA\mis-nubes\error.log"
-          if (Test-Path $log) { "--- error.log ---"; Get-Content $log }
+          if (Test-Path $log) { Write-Output ("::error::error.log: " + ((Get-Content $log -Raw) -replace "`r?`n", "%0A")) }
           if (-not $ok) { throw "El .exe no terminó en 2 minutos (ventana de error o bloqueo)" }
           if ($p.ExitCode -ne 0) { throw "El .exe terminó con código $($p.ExitCode)" }
 

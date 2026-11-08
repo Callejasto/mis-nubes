@@ -349,5 +349,7 @@
   "Abrir Mis nubes": "Open My Clouds",
   "Salir": "Quit",
   "conectadas": "connected",
-  "Sigue abierto aquí, junto al reloj. Para cerrarlo del todo: clic derecho › Salir.": "It stays open here, next to the clock. To close it completely: right-click › Quit."
+  "Sigue abierto aquí, junto al reloj. Para cerrarlo del todo: clic derecho › Salir.": "It stays open here, next to the clock. To close it completely: right-click › Quit.",
+  "Preparando iCloud…": "Preparing iCloud…",
+  "No se pudo preparar iCloud": "Could not set up iCloud"
 }

@@ -883,9 +883,12 @@ def argumentos_montaje(remoto, datos):
     ruta = carpeta_de(remoto, datos)
     extra = MONTAJE_FOTOS if datos.get("service") == "photos" else []
     opciones = list(MONTAJE_OPCIONES)
-    if version_rclone() < (1, 68):          # flujos paralelos: solo en rclone 1.68 o más nuevo
+    v = version_rclone()
+    if v < (1, 68):          # flujos paralelos: solo en rclone 1.68 o más nuevo
         i = opciones.index("--vfs-read-chunk-streams")
         del opciones[i:i + 2]
+    if v < (1, 59):          # Ubuntu 22.04 trae rclone 1.53
+        opciones.remove("--vfs-fast-fingerprint")
     volname = volname_de(remoto, datos) if WINDOWS else titulo_de(remoto, datos).replace("\n", " ")
     destino = letra_unidad(ruta) if es_unidad(ruta) else str(ruta)      # «G:» para una unidad
     args = ["mount", f"{remoto}:", destino, *opciones, "--volname", volname, *extra]
@@ -1586,7 +1589,7 @@ def titulo_grande(texto, extra=6):
 
 
 # ================================================================ versión y créditos
-VERSION = "1.5"
+VERSION = "1.5.1"
 CREDITOS = "Creado por Jose Callejas (Callejasto) y Claude (Anthropic)"
 
 # ================================================================ icono propio
@@ -2463,7 +2466,7 @@ class Asistente(QDialog):
         prefijos = {p["Prefix"] for p in self.provs}
         populares = []
         for tipo, texto in POPULARES:
-            if tipo in prefijos:
+            if tipo in prefijos or tipo == "iclouddrive":   # iCloud: rclone nuevo se descarga solo
                 populares.append((tipo, texto))
             if tipo == "iclouddrive":
                 populares.append((TIPO_FOTOS, "iCloud Fotos"))
@@ -2857,24 +2860,25 @@ class Asistente(QDialog):
         self._crear()
 
     def _crear(self):
+        if self.tipo in (TIPO_FOTOS, "iclouddrive") and not soporta_fotos():
+            # El rclone del sistema es anterior a 1.69 (sin iCloud): se descarga uno propio
+            self._esperar("Preparando iCloud…",
+                          "Descargando una versión más nueva de rclone (unos 25 MB). "
+                          "Solo pasa una vez.", 0)
+            self.lz.lanzar(descargar_rclone, [EVENTOS.progreso.emit], self._rclone_listo)
+            return
         if self.tipo == TIPO_FOTOS:
             self.tipo_rclone, self.extra = "iclouddrive", ["service=photos"]
-            if not soporta_fotos():
-                self._esperar("Preparando iCloud Fotos…",
-                              "Descargando una versión más nueva de rclone (unos 25 MB). "
-                              "Solo pasa una vez.", 0)
-                self.lz.lanzar(descargar_rclone, [EVENTOS.progreso.emit], self._rclone_listo)
-                return
         else:
             self.tipo_rclone = self.tipo
-            self.extra = ["service=drive"] if self.tipo == "iclouddrive" and soporta_fotos() else []
+            self.extra = ["service=drive"] if self.tipo == "iclouddrive" else []
         self._esperar("Preparando…", "Un momento.")
         self.lz.lanzar(tarea_crear, [self.remoto, self.tipo_rclone, self.titulo, self.extra],
                        self._respuesta)
 
     def _rclone_listo(self, res):
         if not res[0] or not soporta_fotos():
-            self._final(False, "No se pudo preparar iCloud Fotos",
+            self._final(False, "No se pudo preparar iCloud",
                         "No se pudo descargar lo necesario. Comprueba tu internet e inténtalo "
                         "de nuevo.", res[1] if len(res) > 1 else None)
             return
@@ -4173,6 +4177,8 @@ TRADUCCIONES["en"] = {
     "Salir": "Quit",
     "conectadas": "connected",
     "Sigue abierto aquí, junto al reloj. Para cerrarlo del todo: clic derecho › Salir.": "It stays open here, next to the clock. To close it completely: right-click › Quit.",
+    "Preparando iCloud…": "Preparing iCloud…",
+    "No se pudo preparar iCloud": "Could not set up iCloud",
 }
 
 
